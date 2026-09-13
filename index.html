@@ -28,7 +28,9 @@ html,body{margin:0;background:var(--chrome);color:var(--ink);
    clears them (a generous fallback where the inset is not reported). */
 .app{padding-top:max(env(safe-area-inset-top, 0px), 8px);padding-left:env(safe-area-inset-left, 0px);padding-right:env(safe-area-inset-right, 0px);box-sizing:border-box}
 @supports not (padding-top: env(safe-area-inset-top)){ .app{padding-top:0} }
-@media (display-mode: standalone){ .app{padding-top:calc(env(safe-area-inset-top, 44px) + 6px)} }
+@media (display-mode: standalone){ .app{padding-top:max(env(safe-area-inset-top, 0px), 58px)} }
+.app.standalone{padding-top:max(env(safe-area-inset-top, 0px), 58px)}
+.build{position:fixed;right:6px;bottom:4px;font-size:10px;color:#777;opacity:.7;pointer-events:none;z-index:99}
 button,select,input{font-family:inherit}
 button:focus-visible,select:focus-visible{outline:2px solid var(--amber);outline-offset:1px}
 
@@ -258,6 +260,7 @@ table.box caption{text-align:left;font-family:"Barlow Condensed";font-size:12px;
 </head>
 <body>
 <div class="app">
+<div class="build">build 2026-09-13 c</div>
 
   <div class="board" id="board"></div>
 
@@ -3047,6 +3050,7 @@ function cancelGame(){
   $('hint').textContent='Game cancelled. Pick two teams, then start.';
 }
 $('cancelgame').onclick=cancelGame;
+if(window.navigator.standalone===true || (window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)) document.querySelector('.app').classList.add('standalone');
 $('resume').onclick=seasonResume;
 SEASON_DB.getState('suspended').then(snap=>{ if(snap&&snap.G) $('resume').style.display=''; }).catch(()=>{});
 seasonUsage();
