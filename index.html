@@ -44,6 +44,9 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--amber);outline
 .board .side .nm{font-family:"Barlow Condensed";font-size:17px;font-weight:600;
   letter-spacing:.01em;white-space:nowrap;line-height:1.15}
 .board .side .rec{font-size:10.5px;color:var(--dim)}
+.board .side{display:flex;align-items:center;gap:10px}
+.board .side .scr{font-family:"Barlow Condensed";font-size:30px;font-weight:700;line-height:1;color:var(--ink);font-variant-numeric:tabular-nums}
+.board .side.live .scr{color:var(--amber)}
 .board .side.live .nm{color:var(--amber)}
 .linegrid{flex:1 1 auto;display:flex;align-items:center;padding:0 6px;overflow-x:auto}
 table.ls{border-collapse:collapse;font-family:"Barlow Condensed";font-variant-numeric:tabular-nums}
@@ -260,7 +263,7 @@ table.box caption{text-align:left;font-family:"Barlow Condensed";font-size:12px;
 </head>
 <body>
 <div class="app">
-<div class="build">build 2026-09-13 c</div>
+<div class="build">build 2026-09-13 d</div>
 
   <div class="board" id="board"></div>
 
@@ -2106,8 +2109,8 @@ function renderBoard(){
   rh+=`<td class="tot">${G.home.R}</td><td class="tot">${G.home.H}</td><td class="tot">${G.home.E}</td></tr>`;
   const bases=[0,1,2].map(i=>`<span class="dot ${G.bases[i]?'on':''}"></span>`).join('');
   $('board').innerHTML=
-   `<div class="side ${G.half===0?'live':''}"><div class="nm">${G.away.name}</div>
-      <div class="rec">visitors</div></div>
+   `<div class="side ${G.half===0?'live':''}"><div><div class="nm">${G.away.name}</div>
+      <div class="rec">visitors</div></div><div class="scr">${G.away.R}</div></div>
     <div class="linegrid"><table class="ls">${head}${ra}${rh}</table></div>
     <div class="statebox">
       <div class="st"><b>${G.half===0?'▲':'▼'}${G.inning}</b><span>inning</span></div>
@@ -2115,7 +2118,7 @@ function renderBoard(){
       <div class="st"><div class="dots">${bases}</div><span style="margin-top:4px;display:block">on base</span></div>
     </div>
     <div class="side ${G.half===1?'live':''}" style="border-right:none;border-left:1px solid var(--rule)">
-      <div class="nm">${G.home.name}</div><div class="rec">home</div></div>`;
+      <div class="scr">${G.home.R}</div><div><div class="nm">${G.home.name}</div><div class="rec">home</div></div></div>`;
 }
 
 /* ─── lineup rails ─── */
