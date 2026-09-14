@@ -265,8 +265,7 @@ table.box caption{text-align:left;font-family:"Barlow Condensed";font-size:12px;
   .chip .pos{font-size:7px;letter-spacing:.04em}
   .chip .who{font-size:10px}
   .chip .rt{display:none}
-  .chip.batter .rt{display:block;font-size:7px}
-  .chip.runner .rt{display:none}
+  .chip.batter .rt,.chip.runner .rt,.chip.pitcher .rt{display:block;font-size:7px}
   .callout{padding:2px 8px 3px;top:4px}
   .callout .r{font-size:15px}
   .callout .d{font-size:9px}
@@ -275,7 +274,7 @@ table.box caption{text-align:left;font-family:"Barlow Condensed";font-size:12px;
 </head>
 <body>
 <div class="app">
-<div class="build">build 2026-09-13 g</div>
+<div class="build">build 2026-09-13 h</div>
 
   <div class="board" id="board"></div>
 
@@ -2042,10 +2041,10 @@ function renderPark(){
   for(const [pos,[x,y]] of Object.entries(POS)){
     if(pos==='P'){
       const ip=(d.pOuts/3).toFixed(1), en=endurance(rawP(), d.pIndex===0);
-      out.push(chip(x,y,'','P',p.name,
-        (p.tired?`<span class="tired">Gr ${gradeStr(p)} −${p.tired}</span> · ${ip} IP`
-               :`Gr ${gradeStr(p)} · ${ip}/${en} IP`)
-        + (p.match&&p.match!==p.card?` · card ${p.card}`:'')));
+      /* the grade rides on the position line -- "P 20KXYZ" -- with the
+         innings on the line below; a tired pitcher shows the deduction */
+      out.push(chip(x,y,'',`P ${gradeStr(p)}${p.tired?' −'+p.tired:''}`,p.name,
+        `${ip}/${en} IP` + (p.match&&p.match!==p.card?` · card ${p.card}`:'')));
       continue;
     }
     const i=T.align?T.align[pos]:undefined;
