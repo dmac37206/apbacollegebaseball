@@ -151,6 +151,7 @@ table.box td{text-align:right;padding:1px 3px;border-bottom:1px solid #1E2620}
 table.box th:first-child,table.box td:first-child{text-align:left;max-width:104px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 table.box tr.tot td{border-top:1px solid var(--rule);color:var(--amber);font-weight:600}
+table.box th.pb,table.box td.pb{text-align:left;color:var(--dim);padding-left:8px;width:1%;white-space:nowrap}
 table.box caption{text-align:left;font-family:"Barlow Condensed";font-size:12px;
   color:var(--amber);padding:5px 0 2px;letter-spacing:.04em}
 #boxtabs button,#seasonmeta{font-family:"Barlow Condensed";font-size:11px}
@@ -274,7 +275,7 @@ table.box caption{text-align:left;font-family:"Barlow Condensed";font-size:12px;
 </head>
 <body>
 <div class="app">
-<div class="build">build 2026-09-13 f</div>
+<div class="build">build 2026-09-13 g</div>
 
   <div class="board" id="board"></div>
 
@@ -2605,16 +2606,18 @@ function renderBox(){
     b.onclick=()=>{BOXSIDE=b.dataset.s;renderBox()});
   const side = BOXSIDE==='away'?G.away:G.home;
   const foe  = BOXSIDE==='away'?G.home:G.away;
-  let bt='<table class="box"><caption>Batting</caption><tr><th>batter</th><th>AB</th><th>R</th><th>H</th>'
+  let bt='<table class="box"><caption>Batting</caption><tr><th>batter</th><th class="pb">pos</th><th class="pb">B</th><th>AB</th><th>R</th><th>H</th>'
        +'<th>RBI</th><th>BB</th><th>K</th><th>AVG</th></tr>';
   let T={ab:0,r:0,h:0,rbi:0,bb:0,k:0};
   side.hitters.forEach(h=>{
     const b=GAMEB[side.name+'|'+h.name]; if(!b) return;
     T.ab+=b.ab;T.r+=b.r;T.h+=b.h;T.rbi+=b.rbi;T.bb+=b.bb;T.k+=b.k;
-    bt+=`<tr><td>${h.name}</td><td>${b.ab}</td><td>${b.r}</td><td>${b.h}</td>`
+    const TT=D.teams[side.name], hi=TT.hitters.findIndex(z=>z.name===h.name);
+    const pe=Object.entries(TT.align||{}).find(([p,idx])=>idx===hi); const posNow=pe?pe[0]:'DH';
+    bt+=`<tr><td>${h.name}</td><td class="pb">${posNow}</td><td class="pb">${batsLtr(h)}</td><td>${b.ab}</td><td>${b.r}</td><td>${b.h}</td>`
       +`<td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td><td>${AVGfmt(b)}</td></tr>`;
   });
-  bt+=`<tr class="tot"><td>totals</td><td>${T.ab}</td><td>${T.r}</td><td>${T.h}</td>`
+  bt+=`<tr class="tot"><td>totals</td><td class="pb"></td><td class="pb"></td><td>${T.ab}</td><td>${T.r}</td><td>${T.h}</td>`
     +`<td>${T.rbi}</td><td>${T.bb}</td><td>${T.k}</td><td></td></tr></table>`;
   let pt='<table class="box"><caption>Pitching</caption><tr><th>pitcher</th><th>IP</th><th>H</th>'
        +'<th>R</th><th>ER</th><th>BB</th><th>K</th></tr>';
