@@ -264,7 +264,8 @@ table.box caption{text-align:left;font-family:"Barlow Condensed";font-size:12px;
   .chip .pos{font-size:7px;letter-spacing:.04em}
   .chip .who{font-size:10px}
   .chip .rt{display:none}
-  .chip.batter .rt,.chip.runner .rt{display:block;font-size:7px}
+  .chip.batter .rt{display:block;font-size:7px}
+  .chip.runner .rt{display:none}
   .callout{padding:2px 8px 3px;top:4px}
   .callout .r{font-size:15px}
   .callout .d{font-size:9px}
@@ -273,7 +274,7 @@ table.box caption{text-align:left;font-family:"Barlow Condensed";font-size:12px;
 </head>
 <body>
 <div class="app">
-<div class="build">build 2026-09-13 e</div>
+<div class="build">build 2026-09-13 f</div>
 
   <div class="board" id="board"></div>
 
@@ -2049,9 +2050,11 @@ function renderPark(){
     const i=T.align?T.align[pos]:undefined;
     if(i===undefined){ out.push(chip(x,y,'',pos,'—','')); continue; }
     const f=T.hitters[i];
-    let ln=`${f.fld} · arm ${f.arm}`;
-    if(pos==='C'&&f.Th!==null&&f.Th!==undefined) ln+=` · Th${f.Th>=0?'+':''}${f.Th}`;
-    out.push(chip(x,y,'',pos,f.name,ln));
+    /* position line carries the rating and the arm: "RF 2/32"; the catcher's
+       throwing adjustment rides along as a third figure */
+    let lab=`${pos} ${f.fld}/${f.arm}`;
+    if(pos==='C'&&f.Th!==null&&f.Th!==undefined) lab+=`/Th${f.Th>=0?'+':''}${f.Th}`;
+    out.push(chip(x,y,'',lab,f.name,''));
   }
   G.bases.forEach((who,i)=>{
     if(!who) return;
@@ -2064,8 +2067,8 @@ function renderPark(){
   /* batter's box: RHB in the left-hand box (third-base side), LHB in the right,
      switch hitters opposite the pitcher -- as seen from behind the plate */
   const bx = standsLeft(h,p) ? HOME[0]-132 : HOME[0]+132;
-  out.push(chip(bx,HOME[1]+16,'batter',`AT BAT · ${batsLtr(h)}`,h.name,
-    `${h.BA.toFixed(3).replace(/^0/,'')} · ${h.HR} HR · ${h.BB} BB · spd ${h.speed}`));
+  out.push(chip(bx,HOME[1]+16,'batter','',h.name,
+    `${h.BA.toFixed(3).replace(/^0/,'')} · ${h.HR} HR · ${h.SB||0} SB · spd ${h.speed}`));
   if(LASTPLAY) out.push(`<div class="callout"><div class="r">${LASTPLAY.desc}</div>
     <div class="d">${LASTPLAY.dice}</div></div>`);
   $('overlay').innerHTML=out.join('');
