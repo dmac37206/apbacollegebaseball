@@ -258,12 +258,22 @@ table.box caption{text-align:left;font-family:"Barlow Condensed";font-size:12px;
   .st b{font-size:16px}
   .feed{height:104px}
   .deck .pane.pitcher{display:none}
+  /* phone: the park is a third the width, so the fielder chips shrink to
+     match -- position and name only, same spots on the field as the desktop */
+  .chip .lab{padding:0 3px 1px;border-width:1px}
+  .chip .pos{font-size:7px;letter-spacing:.04em}
+  .chip .who{font-size:10px}
+  .chip .rt{display:none}
+  .chip.batter .rt,.chip.runner .rt{display:block;font-size:7px}
+  .callout{padding:2px 8px 3px;top:4px}
+  .callout .r{font-size:15px}
+  .callout .d{font-size:9px}
 }
 </style>
 </head>
 <body>
 <div class="app">
-<div class="build">build 2026-09-13 d</div>
+<div class="build">build 2026-09-13 e</div>
 
   <div class="board" id="board"></div>
 
