@@ -71,7 +71,7 @@ body{padding-top:env(safe-area-inset-top, 0px)}
 <div class="stage">
   <div class="pane"><h3 id="schedhead">Schedule</h3><div class="sched" id="sched"></div></div>
   <div class="pane">
-    <div class="tabs"><button data-t="bat" class="on">Batting</button><button data-t="pit">Pitching</button><button data-t="log">Game log</button><button data-t="all">All teams</button></div>
+    <div class="tabs"><button data-t="bat" class="on">Batting</button><button data-t="pit">Pitching</button><button data-t="log">Game log</button><button data-t="stand">Standings</button><button data-t="all">All teams</button></div>
     <div class="body" id="body"></div>
   </div>
 </div>
@@ -172,6 +172,7 @@ function compile(t){
   for(const g of teamGames(t)){
     const side=(g.home===t)?'home':'away', foe=(side==='home')?'away':'home';
     const us=g[side+'R'], them=g[foe+'R']; rf+=us; ra+=them; if(us>them) w++; else l++;
+    if(!g.box||!g.box[side]) continue;
     for(const b of g.box[side].batting){ const x=B[b.name]||(B[b.name]={name:b.name,pos:b.pos,g:0,ab:0,r:0,h:0,d:0,t:0,hr:0,rbi:0,bb:0,k:0,hbp:0,sb:0,cs:0});
       if(b.ab||b.bb||b.hbp||b.r) x.g++; for(const k of ['ab','r','h','d','t','hr','rbi','bb','k','hbp','sb','cs']) x[k]+=b[k]||0; }
     for(const p of g.box[side].pitching){ const x=P[p.name]||(P[p.name]={name:p.name,g:0,gs:0,w:0,l:0,sv:0,outs:0,h:0,r:0,er:0,bb:0,k:0,hr:0});
@@ -242,8 +243,23 @@ function renderBody(C,tg){
       const wp=(us>them?mine:theirs).find(p=>p.w), lp=(us>them?theirs:mine).find(p=>p.l), sv=(us>them?mine:theirs).find(p=>p.sv);
       h+=`<tr><td class="nm">${g.date}</td><td class="nm">${home?'':'at '}${home?g.away:g.home}</td><td style="color:${us>them?'var(--win)':'var(--loss)'}">${us>them?'W':'L'} ${us}-${them}${g.innings>9?` (${g.innings})`:''}</td><td class="nm">${wp?wp.name:''}</td><td class="nm">${lp?lp.name:''}</td><td class="nm">${sv?sv.name:''}</td><td class="nm" style="color:var(--dim)">${g.line.away.join(' ')} | ${g.line.home.join(' ')}</td><td><button class="rm" data-k="${key(g)}" title="remove this game from the ledger">✕</button></td></tr>`; }
     h+='</table>';
+  } else if(TAB==='stand'){
+    /* Standings by conference: only Division I teams (those in the conference map); non-D1 opponents never appear.
+       Conference record counts games between two members of the same conference. */
+    const c={}; for(const g of GAMES){ if(g.awayR===null||g.homeR===null) continue; const ca=CONF.team2c[g.away], ch=CONF.team2c[g.home];
+      for(const [t,us,them,oc] of [[g.home,g.homeR,g.awayR,ca],[g.away,g.awayR,g.homeR,ch]]){ const tc=CONF.team2c[t]; if(!tc) continue; const x=c[t]||(c[t]={t,conf:tc,w:0,l:0,cw:0,cl:0,rf:0,ra:0}); if(us>them)x.w++;else x.l++; x.rf+=us; x.ra+=them; if(oc===tc){ if(us>them)x.cw++; else x.cl++; } } }
+    const byconf={}; for(const x of Object.values(c)) (byconf[x.conf]||(byconf[x.conf]=[])).push(x);
+    const pct=x=>(x.w+x.l)?x.w/(x.w+x.l):0, cpct=x=>(x.cw+x.cl)?x.cw/(x.cw+x.cl):0;
+    h='';
+    for(const conf of Object.keys(byconf).sort()){
+      const rows=byconf[conf].sort((a,b)=>cpct(b)-cpct(a)||pct(b)-pct(a)||(b.w-a.w));
+      h+=`<h4 style="font-family:'Barlow Condensed';font-size:16px;margin:14px 0 4px">${conf}</h4><table class="box"><tr><th style="text-align:left">team</th><th>conf</th><th>pct</th><th>overall</th><th>pct</th><th>RF</th><th>RA</th></tr>`;
+      for(const x of rows) h+=`<tr class="${x.t===TEAM?'next':''}"><td class="nm">${x.t}</td><td>${x.cw}-${x.cl}</td><td>${f3(cpct(x))}</td><td>${x.w}-${x.l}</td><td>${f3(pct(x))}</td><td>${x.rf}</td><td>${x.ra}</td></tr>`;
+      h+='</table>';
+    }
+    if(!h) h='<div class="note">No games yet.</div>';
   } else if(TAB==='all'){
-    const c={}; for(const g of GAMES){ for(const [t,us,them] of [[g.home,g.homeR,g.awayR],[g.away,g.awayR,g.homeR]]){ const x=c[t]||(c[t]={t,w:0,l:0,rf:0,ra:0}); if(us>them)x.w++;else x.l++; x.rf+=us; x.ra+=them; } }
+    const c={}; for(const g of GAMES){ for(const [t,us,them] of [[g.home,g.homeR,g.awayR],[g.away,g.awayR,g.homeR]]){ if(!CONF.team2c[t]) continue; const x=c[t]||(c[t]={t,w:0,l:0,rf:0,ra:0}); if(us>them)x.w++;else x.l++; x.rf+=us; x.ra+=them; } }
     const rows=Object.values(c).sort((a,b)=>(b.w/(b.w+b.l))-(a.w/(a.w+a.l))||(b.w-a.w));
     h='<table class="box"><tr><th style="text-align:left">team</th><th>conf</th><th>W</th><th>L</th><th>pct</th><th>RF</th><th>RA</th></tr>';
     for(const x of rows) h+=`<tr><td>${x.t}</td><td>${CONF.team2c[x.t]||''}</td><td>${x.w}</td><td>${x.l}</td><td>${f3(x.w/(x.w+x.l))}</td><td>${x.rf}</td><td>${x.ra}</td></tr>`;
