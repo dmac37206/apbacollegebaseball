@@ -301,6 +301,7 @@ table.apbastat td{text-align:right;padding:0 1px;color:#C8342B;font-weight:700}
 .cloudform .cf-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
 .cloudform .cf-msg{font-size:12px;color:#ccc}
 .gate{position:fixed;inset:0;z-index:2000;background:#0f1a12 url() center/cover;display:flex;align-items:center;justify-content:center;padding:20px;padding-top:max(env(safe-area-inset-top,0px),20px)}
+.gate[hidden]{display:none}
 .gate-card{background:#1b1b1b;color:#eee;border:1px solid #3a5;border-radius:12px;padding:22px 20px;width:min(360px,92vw);display:flex;flex-direction:column;gap:9px;font-family:Arial,Helvetica,sans-serif}
 .gate-title{font-family:"Barlow Condensed",Arial,sans-serif;font-size:30px;font-weight:700;color:var(--amber,#e8a33d);text-align:center;line-height:1}
 .gate-sub{font-size:12px;color:#aaa;text-align:center;margin-bottom:4px}
@@ -314,7 +315,7 @@ table.apbastat td{text-align:right;padding:0 1px;color:#C8342B;font-weight:700}
 </head>
 <body>
 <div class="app">
-<div class="build">build 2026-09-15 d</div>
+<div class="build">build 2026-09-15 e</div>
 <div id="gate" class="gate">
   <div class="gate-card">
     <div class="gate-title">APBA College Baseball</div>
@@ -3162,7 +3163,7 @@ const CLOUD=(function(){
   let gateDone=false;
   function gateUpdate(){
     const g=$$('gate'); if(!g||gateDone) return;
-    if(user){ g.hidden=true; gateDone=true; return; }
+    if(user){ g.hidden=true; g.style.display='none'; gateDone=true; return; }
     const msg=$$('gate-msg'); if(!ready){ if(msg) msg.textContent='Can\'t reach the sign-in service (offline?). You can play on this device without signing in.'; return; }
     if(msg&&msg.textContent==='Connecting…') msg.textContent='';
   }
@@ -3183,7 +3184,7 @@ const CLOUD=(function(){
     const e=$$('gate-email'); if(e) e.value=LS.get('cloud_email')||'';
     if($$('gate-in')) $$('gate-in').onclick=()=>gateAuth('in'); if($$('gate-new')) $$('gate-new').onclick=()=>gateAuth('new'); if($$('gate-forgot')) $$('gate-forgot').onclick=()=>gateAuth('forgot');
     if($$('gate-pass')) $$('gate-pass').addEventListener('keydown',ev=>{ if(ev.key==='Enter') gateAuth('in'); });
-    if($$('gate-skip')) $$('gate-skip').onclick=()=>{ $$('gate').hidden=true; gateDone=true; };
+    if($$('gate-skip')) $$('gate-skip').onclick=()=>{ $$('gate').hidden=true; $$('gate').style.display='none'; gateDone=true; };
     setTimeout(()=>{ if(!gateDone&&!ready){ const msg=$$('gate-msg'); if(msg&&msg.textContent==='Connecting…') msg.textContent='Still connecting… you can continue offline below.'; } },6000);
   });
   listeners.push(()=>{ try{ SEASON_DB.getState('season').then(st=>{ if(st&&st.team){ SEASON=st; seasonUI(); $('seasonpanel').hidden=false; } else if(!st&&SEASON){ SEASON=null; seasonUI(); } }); SEASON_DB.getState('suspended').then(snap=>{ $('resume').style.display=(snap&&snap.G)?'':'none'; }); seasonUsage(); }catch(e){} });
