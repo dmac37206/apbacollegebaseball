@@ -37,6 +37,7 @@ html,body{margin:0;background:var(--chrome);color:var(--ink);
 .seasonpanel .sp-btns{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
 .seasonpanel .sp-note{font-size:12px;color:var(--dim);margin-top:4px}
 .seasonpanel .sp-date{font-size:14px;margin:4px 0}
+.cloudstatus{font-size:11px;color:var(--dim);margin-left:6px}
 .build{position:fixed;right:6px;bottom:4px;font-size:10px;color:#777;opacity:.7;pointer-events:none;z-index:99}
 button,select,input{font-family:inherit}
 button:focus-visible,select:focus-visible{outline:2px solid var(--amber);outline-offset:1px}
@@ -293,11 +294,39 @@ table.apbastat td{text-align:right;padding:0 1px;color:#C8342B;font-weight:700}
   .callout .r{font-size:15px}
   .callout .d{font-size:9px}
 }
+.cloudform{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center}
+.cloudform .cf{background:#1b1b1b;color:#eee;border:1px solid #444;border-radius:10px;padding:16px 18px;min-width:300px;display:flex;flex-direction:column;gap:8px;font-family:Arial,Helvetica,sans-serif}
+.cloudform label{display:flex;flex-direction:column;gap:3px;font-size:12px}
+.cloudform input{font-size:15px;padding:6px 8px;border-radius:6px;border:1px solid #555;background:#111;color:#eee}
+.cloudform .cf-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.cloudform .cf-msg{font-size:12px;color:#ccc}
+.gate{position:fixed;inset:0;z-index:2000;background:#0f1a12 url() center/cover;display:flex;align-items:center;justify-content:center;padding:20px;padding-top:max(env(safe-area-inset-top,0px),20px)}
+.gate-card{background:#1b1b1b;color:#eee;border:1px solid #3a5;border-radius:12px;padding:22px 20px;width:min(360px,92vw);display:flex;flex-direction:column;gap:9px;font-family:Arial,Helvetica,sans-serif}
+.gate-title{font-family:"Barlow Condensed",Arial,sans-serif;font-size:30px;font-weight:700;color:var(--amber,#e8a33d);text-align:center;line-height:1}
+.gate-sub{font-size:12px;color:#aaa;text-align:center;margin-bottom:4px}
+.gate-card label{display:flex;flex-direction:column;gap:3px;font-size:12px}
+.gate-card input{font-size:16px;padding:8px;border-radius:6px;border:1px solid #555;background:#111;color:#eee}
+.gate-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.gate-btns button{flex:1 1 auto}
+.gate-msg{font-size:12px;color:#ccc;min-height:16px}
+.gate-skip{background:none;border:none;color:#888;font-size:11px;text-decoration:underline;cursor:pointer;margin-top:6px}
 </style>
 </head>
 <body>
 <div class="app">
-<div class="build">build 2026-09-15 a</div>
+<div class="build">build 2026-09-15 d</div>
+<div id="gate" class="gate">
+  <div class="gate-card">
+    <div class="gate-title">APBA College Baseball</div>
+    <div class="gate-sub">Sign in to keep one ledger across your devices.</div>
+    <label>Email <input type="email" id="gate-email" autocomplete="username"></label>
+    <label>Password <input type="password" id="gate-pass" autocomplete="current-password"></label>
+    <div class="gate-btns"><button id="gate-in" class="go">Sign in</button><button id="gate-new">Create account</button><button id="gate-forgot">Forgot password</button></div>
+    <div id="gate-msg" class="gate-msg">Connecting…</div>
+    <button id="gate-skip" class="gate-skip">Continue without signing in (this device only)</button>
+  </div>
+</div>
+
 
   <div class="board" id="board"></div>
 
@@ -390,6 +419,7 @@ table.apbastat td{text-align:right;padding:0 1px;color:#C8342B;font-weight:700}
     <button id="resume" style="display:none" class="go" title="Pick up the suspended game where it left off">Resume suspended game</button>
     <button id="seasonbtn" title="Season Mode: pick your team, play the 2026 schedule day by day">Season</button>
     <a id="seasonlink" href="season.html" style="margin-left:6px">Season ledger ↗</a>
+    <button id="cloudbtn" title="Sign in with your email to keep one ledger across devices" disabled>Sign in</button><span id="cloudstatus" class="cloudstatus"></span>
     <label style="cursor:pointer"><input type="file" id="usagefile" accept=".json" style="display:none">Load season usage</label>
     <span class="hint" id="hint">Pick two teams, then start.</span>
   </div>
@@ -2992,6 +3022,7 @@ function downloadJSON(obj,name){
    IndexedDB 'apba-season': 'games' keyed by date|away|home (a replay of a
    game already final keeps the old result; a suspended game in that slot is
    replaced), 'state' holds the one suspended game under 'suspended'. */
+const LS={get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }};
 const SEASON_DB=(function(){
   const NAME='apba-season', VER=1;
   function open(){ return new Promise((res,rej)=>{ if(!window.indexedDB){ rej(new Error('no IndexedDB')); return; }
@@ -3000,16 +3031,17 @@ const SEASON_DB=(function(){
     r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
   function tx(store,mode,fn){ return open().then(db=>new Promise((res,rej)=>{ const t=db.transaction(store,mode), s=t.objectStore(store); const out=fn(s); t.oncomplete=()=>{ db.close(); res((out&&typeof out==='object'&&'result' in out)?out.result:out); }; t.onerror=()=>{ db.close(); rej(t.error); }; })); }
   const gid=g=>`${g.date}|${g.away}|${g.home}`;
+  const wrap=(fn,mirror)=>function(...a){ const opts=(a.length&&a[a.length-1]&&typeof a[a.length-1]==='object'&&'noCloud' in a[a.length-1])?a.pop():{}; const r=fn.apply(this,a); if(!opts.noCloud) r.then(()=>{ try{ mirror(...a); }catch(e){} }).catch(()=>{}); return r; };
   return {
     gid,
     all(){ return tx('games','readonly',s=>s.getAll()).then(r=>(r||[]).sort((a,b)=>a.date.localeCompare(b.date))); },
     get(id){ return tx('games','readonly',s=>s.get(id)); },
-    put(g){ g.id=g.id||gid(g); return tx('games','readwrite',s=>s.put(g)).then(()=>g.id); },
-    del(id){ return tx('games','readwrite',s=>s.delete(id)); },
+    put:wrap(function(g){ g.id=g.id||gid(g); return tx('games','readwrite',s=>s.put(g)).then(()=>g.id); }, g=>window.CLOUD&&CLOUD.putGame(g)),
+    del:wrap(function(id){ return tx('games','readwrite',s=>s.delete(id)); }, id=>window.CLOUD&&CLOUD.delGame(id)),
     clear(){ return tx('games','readwrite',s=>s.clear()); },
     getState(k){ return tx('state','readonly',s=>s.get(k)); },
-    setState(k,v){ return tx('state','readwrite',s=>s.put(v,k)); },
-    delState(k){ return tx('state','readwrite',s=>s.delete(k)); },
+    setState:wrap(function(k,v){ LS.set('state_up_'+k,String(Date.now())); return tx('state','readwrite',s=>s.put(v,k)); }, (k,v)=>window.CLOUD&&CLOUD.setState(k,v)),
+    delState:wrap(function(k){ LS.set('state_up_'+k,String(Date.now())); return tx('state','readwrite',s=>s.delete(k)); }, k=>window.CLOUD&&CLOUD.delState(k)),
     /* every pitcher's outings, for the game's rest rules */
     usage(games){ const teams={}; let asOf='';
       for(const g of games){ if(g.date>asOf) asOf=g.date;
@@ -3019,6 +3051,146 @@ const SEASON_DB=(function(){
       return {format:'apba-college-baseball-usage/1',asOf,teams}; }
   };
 })();
+
+/* ── CLOUD SYNC (Firebase) ─────────────────────────────────────────────
+   Sign in with Google and the ledger, the suspended game and the season's
+   position live under your account: users/{uid}/games, users/{uid}/state.
+   The browser store stays the offline copy; every local write is mirrored
+   to the cloud when signed in, and on sign-in/reload anything newer in the
+   cloud is pulled down.  Reads are kept small by only pulling games written
+   since the last sync.  Everything degrades to local-only if the Firebase
+   scripts cannot load (offline). */
+const FIREBASE_CONFIG={apiKey:"AIzaSyBeNV_Ids57i0dfy97-P3ziViR1UWh3e38",authDomain:"apba-college-baseball.firebaseapp.com",projectId:"apba-college-baseball",storageBucket:"apba-college-baseball.firebasestorage.app",messagingSenderId:"511117064009",appId:"1:511117064009:web:5fad013a8f7a1080dd8c98"};
+const CLOUD=(function(){
+  let app=null, auth=null, db=null, user=null, ready=false, syncing=false; const listeners=[];
+  const $$=id=>document.getElementById(id);
+  function status(msg){ const el=$$('cloudstatus'); if(el) el.textContent=msg||''; }
+  function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('load '+src)); document.head.appendChild(s); }); }
+  async function init(){
+    try{
+      const v='10.14.1';
+      await loadScript(`https://www.gstatic.com/firebasejs/${v}/firebase-app-compat.js`);
+      await loadScript(`https://www.gstatic.com/firebasejs/${v}/firebase-auth-compat.js`);
+      await loadScript(`https://www.gstatic.com/firebasejs/${v}/firebase-firestore-compat.js`);
+      app=firebase.initializeApp(FIREBASE_CONFIG); auth=firebase.auth(); db=firebase.firestore();
+      try{ await db.enablePersistence({synchronizeTabs:true}); }catch(e){}
+      ready=true;
+      auth.onAuthStateChanged(async u=>{ user=u; renderButton(); gateUpdate(); if(u){ status('Signed in as '+(u.email||u.displayName)); try{ await fullSync(); }catch(e){ console.warn('sync',e); status('Sync problem: '+e.message); } } else status(''); });
+    }catch(e){ console.warn('cloud unavailable',e.message); ready=false; renderButton(); gateUpdate(); }
+  }
+  function renderButton(){
+    const b=$$('cloudbtn'); if(!b) return;
+    if(!ready){ b.textContent='Sign in'; b.title='Cloud sync unavailable (offline?)'; b.disabled=true; return; }
+    b.disabled=false;
+    if(user){ b.textContent='Sign out'; b.title='Signed in as '+(user.email||''); }
+    else { b.textContent='Sign in'; b.title='Sign in with your email to keep one ledger across devices'; }
+  }
+  /* Email + password sign-in (David's ruling: no Google account).  The first
+     time, "Create account" registers the email; after that, "Sign in". */
+  function askCreds(){
+    return new Promise(res=>{
+      let box=$$('cloudform'); if(box) box.remove();
+      box=document.createElement('div'); box.id='cloudform'; box.className='cloudform';
+      box.innerHTML=`<div class="cf"><b>Sign in to sync your ledger</b>
+        <label>Email <input type="email" id="cf-email" autocomplete="username" value="${LS.get('cloud_email')||''}"></label>
+        <label>Password <input type="password" id="cf-pass" autocomplete="current-password"></label>
+        <div class="cf-btns"><button id="cf-in" class="go">Sign in</button><button id="cf-new">Create account</button><button id="cf-forgot">Forgot password</button><button id="cf-cancel">Cancel</button></div>
+        <div id="cf-msg" class="cf-msg"></div></div>`;
+      document.body.appendChild(box);
+      const done=v=>{ box.remove(); res(v); };
+      $$('cf-cancel').onclick=()=>done(null);
+      $$('cf-in').onclick=()=>done({mode:'in',email:$$('cf-email').value.trim(),pass:$$('cf-pass').value});
+      $$('cf-new').onclick=()=>done({mode:'new',email:$$('cf-email').value.trim(),pass:$$('cf-pass').value});
+      $$('cf-forgot').onclick=()=>done({mode:'forgot',email:$$('cf-email').value.trim()});
+      $$('cf-email').focus();
+    });
+  }
+  async function signIn(){
+    if(!ready) return;
+    const c=await askCreds(); if(!c||!c.email) return;
+    LS.set('cloud_email',c.email);
+    try{
+      if(c.mode==='forgot'){ await auth.sendPasswordResetEmail(c.email); status('Password reset email sent to '+c.email); return; }
+      if(!c.pass){ status('Enter a password.'); return; }
+      if(c.mode==='new') await auth.createUserWithEmailAndPassword(c.email,c.pass);
+      else await auth.signInWithEmailAndPassword(c.email,c.pass);
+    }catch(e){
+      const m={'auth/user-not-found':'No account with that email yet — use Create account.','auth/wrong-password':'Wrong password.','auth/invalid-credential':'Wrong email or password.','auth/email-already-in-use':'That email already has an account — use Sign in.','auth/weak-password':'Password needs at least 6 characters.','auth/invalid-email':'That is not a valid email address.','auth/operation-not-allowed':'Email sign-in is not enabled in the Firebase console yet.'}[e.code]||e.message;
+      status('Sign-in failed: '+m);
+    }
+  }
+  async function signOut(){ if(auth) await auth.signOut(); }
+  const col=()=>db.collection('users').doc(user.uid).collection('games');
+  const stateDoc=k=>db.collection('users').doc(user.uid).collection('state').doc(k);
+  const metaDoc=()=>db.collection('users').doc(user.uid).collection('state').doc('_meta');
+  const sanitize=v=>JSON.parse(JSON.stringify(v));
+  /* --- mirrors of local writes --- */
+  async function putGame(g){ if(!user||!ready) return; try{ await col().doc(String(g.id).replace(/\//g,'_')).set(Object.assign(sanitize(g),{updated:firebase.firestore.FieldValue.serverTimestamp()})); }catch(e){ console.warn('cloud put',e); } }
+  async function putGames(list){ if(!user||!ready||!list.length) return; try{ for(let i=0;i<list.length;i+=400){ const b=db.batch(); for(const g of list.slice(i,i+400)) b.set(col().doc(String(g.id).replace(/\//g,'_')),Object.assign(sanitize(g),{updated:firebase.firestore.FieldValue.serverTimestamp()})); await b.commit(); } }catch(e){ console.warn('cloud batch',e); } }
+  async function delGame(id){ if(!user||!ready) return; try{ await col().doc(String(id).replace(/\//g,'_')).delete(); }catch(e){ console.warn('cloud del',e); } }
+  async function setState(k,v){ if(!user||!ready) return; try{ await stateDoc(k).set({v:v===undefined?null:sanitize(v),updated:firebase.firestore.FieldValue.serverTimestamp()}); }catch(e){ console.warn('cloud state',e); } }
+  async function delState(k){ if(!user||!ready) return; try{ await stateDoc(k).set({v:null,deleted:true,updated:firebase.firestore.FieldValue.serverTimestamp()}); }catch(e){ console.warn('cloud delstate',e); } }
+  /* --- pull + push on sign-in / reload --- */
+  async function fullSync(){
+    if(!user||!ready||syncing) return; syncing=true; status('Syncing…');
+    try{
+      const local=await SEASON_DB.all(); const localIds=new Set(local.map(g=>g.id));
+      const lastKey='cloud_last_'+user.uid; const last=LS.get(lastKey);
+      /* games written in the cloud since our last look */
+      let q=col().orderBy('updated'); if(last) q=q.where('updated','>',firebase.firestore.Timestamp.fromMillis(Number(last)));
+      const snap=await q.get(); let pulled=0, newest=last?Number(last):0;
+      for(const d of snap.docs){ const g=d.data(); const up=g.updated&&g.updated.toMillis?g.updated.toMillis():0; if(up>newest) newest=up; delete g.updated;
+        if(!localIds.has(g.id)){ await SEASON_DB.put(g,{noCloud:true}); pulled++; localIds.add(g.id); } }
+      /* local games the cloud does not have: cheap check by id list */
+      const ids=await col().select('id').get().catch(()=>null);   // one read per doc, but only ids
+      let pushed=0;
+      if(ids){ const cloudIds=new Set(ids.docs.map(d=>d.get('id'))); const missing=local.filter(g=>!cloudIds.has(g.id)); if(missing.length){ await putGames(missing); pushed=missing.length; } }
+      /* season position and suspended game: newest wins */
+      for(const k of ['season','suspended']){
+        const cd=await stateDoc(k).get().catch(()=>null); const cloud=cd&&cd.exists?cd.data():null; const cloudUp=cloud&&cloud.updated&&cloud.updated.toMillis?cloud.updated.toMillis():0;
+        const loc=await SEASON_DB.getState(k).catch(()=>null); const locUp=Number(LS.get('state_up_'+k)||0);
+        if(cloud&&cloudUp>locUp){ if(cloud.deleted||cloud.v===null) await SEASON_DB.delState(k,{noCloud:true}); else await SEASON_DB.setState(k,cloud.v,{noCloud:true}); LS.set('state_up_'+k,String(cloudUp)); }
+        else if(loc!==undefined&&loc!==null&&locUp>cloudUp){ await setState(k,loc); }
+      }
+      if(newest) LS.set(lastKey,String(newest));
+      status(`Synced — ${pulled} pulled, ${pushed} pushed · ${user.email||''}`);
+      for(const f of listeners){ try{ f(); }catch(e){} }
+    } finally { syncing=false; }
+  }
+  document.addEventListener('DOMContentLoaded',()=>{ const b=$$('cloudbtn'); if(b) b.onclick=()=>{ user?signOut():signIn(); }; });
+  /* ── the login page: shown until signed in, or until the player chooses to play offline on this device ── */
+  let gateDone=false;
+  function gateUpdate(){
+    const g=$$('gate'); if(!g||gateDone) return;
+    if(user){ g.hidden=true; gateDone=true; return; }
+    const msg=$$('gate-msg'); if(!ready){ if(msg) msg.textContent='Can\'t reach the sign-in service (offline?). You can play on this device without signing in.'; return; }
+    if(msg&&msg.textContent==='Connecting…') msg.textContent='';
+  }
+  async function gateAuth(mode){
+    const email=($$('gate-email').value||'').trim(), pass=$$('gate-pass').value; const msg=$$('gate-msg');
+    if(!email){ msg.textContent='Enter your email.'; return; } LS.set('cloud_email',email);
+    if(!ready){ msg.textContent='Sign-in service unreachable — use the offline link below.'; return; }
+    try{
+      if(mode==='forgot'){ await auth.sendPasswordResetEmail(email); msg.textContent='Password reset email sent to '+email; return; }
+      if(!pass){ msg.textContent='Enter a password.'; return; }
+      msg.textContent='Signing in…';
+      if(mode==='new') await auth.createUserWithEmailAndPassword(email,pass); else await auth.signInWithEmailAndPassword(email,pass);
+    }catch(e){
+      msg.textContent={'auth/user-not-found':'No account with that email yet — use Create account.','auth/wrong-password':'Wrong password.','auth/invalid-credential':'Wrong email or password.','auth/email-already-in-use':'That email already has an account — use Sign in.','auth/weak-password':'Password needs at least 6 characters.','auth/invalid-email':'That is not a valid email address.','auth/operation-not-allowed':'Email sign-in is not enabled in the Firebase console yet.','auth/network-request-failed':'No connection — try again, or continue offline below.'}[e.code]||e.message;
+    }
+  }
+  document.addEventListener('DOMContentLoaded',()=>{
+    const e=$$('gate-email'); if(e) e.value=LS.get('cloud_email')||'';
+    if($$('gate-in')) $$('gate-in').onclick=()=>gateAuth('in'); if($$('gate-new')) $$('gate-new').onclick=()=>gateAuth('new'); if($$('gate-forgot')) $$('gate-forgot').onclick=()=>gateAuth('forgot');
+    if($$('gate-pass')) $$('gate-pass').addEventListener('keydown',ev=>{ if(ev.key==='Enter') gateAuth('in'); });
+    if($$('gate-skip')) $$('gate-skip').onclick=()=>{ $$('gate').hidden=true; gateDone=true; };
+    setTimeout(()=>{ if(!gateDone&&!ready){ const msg=$$('gate-msg'); if(msg&&msg.textContent==='Connecting…') msg.textContent='Still connecting… you can continue offline below.'; } },6000);
+  });
+  listeners.push(()=>{ try{ SEASON_DB.getState('season').then(st=>{ if(st&&st.team){ SEASON=st; seasonUI(); $('seasonpanel').hidden=false; } else if(!st&&SEASON){ SEASON=null; seasonUI(); } }); SEASON_DB.getState('suspended').then(snap=>{ $('resume').style.display=(snap&&snap.G)?'':'none'; }); seasonUsage(); }catch(e){} });
+  init();
+  return {putGame,putGames,delGame,setState,delState,fullSync,onSync:f=>listeners.push(f),get user(){return user;},get ready(){return ready;},signIn,signOut};
+})();
+
 
 
 /* ── Removing an injured or ejected player (David's ruling: out for the rest
