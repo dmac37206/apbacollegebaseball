@@ -315,7 +315,7 @@ table.apbastat td{text-align:right;padding:0 1px;color:#C8342B;font-weight:700}
 </head>
 <body>
 <div class="app">
-<div class="build">build 2026-09-15 e</div>
+<div class="build">build 2026-09-15 f</div>
 <div id="gate" class="gate">
   <div class="gate-card">
     <div class="gate-title">APBA College Baseball</div>
@@ -3390,15 +3390,16 @@ function seasonPlayMine(){
   Object.keys(D.teams).filter(t=>D.teams[t].nonD1).forEach(dropNonD1);
   const [id,date,away,home]=g; for(const t of [away,home]) ensureTeam(t);
   const side=(home===SEASON.team)?'home':'away', opp=(side==='home')?'away':'home';
-  COACH[side]='H'; COACH[opp]='C'; if($('coach'+side)) $('coach'+side).value='H'; if($('coach'+opp)) $('coach'+opp).value='C';
+  COACH[side]='H'; COACH[opp]='C'; $('coachA').value=(side==='away')?'H':'C'; $('coachH').value=(side==='home')?'H':'C';
   $('away').value=away; $('home').value=home; $('away').dispatchEvent(new Event('change')); $('home').dispatchEvent(new Event('change'));
   $('gdate').value=date; $('gtype').value=String(spDayKind(date));
   $('start').onclick(); $('sp-prog').textContent='Your game is set up in the ballpark. Roll for the batter.'; seasonUI();
-  window.scrollTo({top:$('seasonpanel').offsetTop,behavior:'smooth'});
+  /* out of the way: the panel folds and the ballpark shows exactly as in a normal game; the Season button brings it back */
+  $('seasonpanel').hidden=true; window.scrollTo({top:0,behavior:'smooth'});
 }
 function seasonAfterFinal(f){
   if(!SEASON) return; const d=SEASON_DATES[SEASON.day]; const g=spMine(d); if(!g) return;
-  if(f.date===g[1]&&f.away===g[2]&&f.home===g[3]){ SEASON.done[spKey(g)]=1; const won=(f.winner===SEASON.team); if(won) SEASON.w++; else SEASON.l++; seasonSave(); seasonUI(); }
+  if(f.date===g[1]&&f.away===g[2]&&f.home===g[3]){ SEASON.done[spKey(g)]=1; const won=(f.winner===SEASON.team); if(won) SEASON.w++; else SEASON.l++; seasonSave(); seasonUI(); $('seasonpanel').hidden=false; }
 }
 function seasonNextDay(){ if(!SEASON) return; if(SEASON.day<SEASON_DATES.length-1){ SEASON.day++; seasonSave(); seasonUI(); $('sp-prog').textContent=''; } }
 $('seasonbtn').onclick=()=>{ $('seasonpanel').hidden=!$('seasonpanel').hidden; seasonUI(); };
