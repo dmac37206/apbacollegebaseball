@@ -51,7 +51,11 @@ function rows(gid,ncaaId,date,bx){
   return out;
 }
 async function run(conf){
-  const ids=CONF[conf]; if(!ids){ console.log('unknown conference; NCAA.list()'); return; }
+  /* 'ALL' = every regular-season game (through May 17) not already pulled in a conference run */
+  let ids=CONF[conf];
+  if(conf==='ALL'){ const done=new Set(); for(const c of Object.keys(CONF)){ const st=JSON.parse(localStorage.getItem('ncaa2_'+c)||'{"done":{}}'); for(const k of Object.keys(st.done)) done.add(k); }
+    ids=Object.keys(SCHED).filter(k=>SCHED[k][0]<='2026-05-17'&&!done.has(k)).map(Number); }
+  if(!ids){ console.log('unknown conference; NCAA.list()'); return; }
   const key='ncaa2_'+conf; const st=JSON.parse(localStorage.getItem(key)||'{"done":{},"rows":[],"miss":[]}');
   const todo=ids.filter(i=>!st.done[i]); console.log(conf,ids.length,'games,',todo.length,'to fetch'); let n=0; const t0=Date.now();
   for(const gid of todo){
@@ -74,6 +78,6 @@ async function run(conf){
 }
 return {run,list:()=>console.log(Object.keys(CONF).sort().map(c=>c+' ('+CONF[c].length+')').join('\n')),reset:c=>{ localStorage.removeItem('ncaa2_'+c); Object.keys(localStorage).filter(k=>k.startsWith('ncaa_sb')).forEach(k=>localStorage.removeItem(k)); },scoreboard,box};
 })();
-console.log('puller v3 loaded (ncaa.com data call). NCAA.list() for conferences; NCAA.run("SEC") to start.');
+console.log('puller v4 loaded. NCAA.run("ALL") pulls every remaining regular-season game (~2 h, resumable); NCAA.list() for single conferences.');
 localStorage.removeItem('ncaa_sb2_2026-02-13');
 NCAA.scoreboard('2026-02-13').then(p=>console.log('self-check:',p.length,'games on 2026-02-13',p.length?JSON.stringify(p[0]):'')).catch(e=>console.log('self-check FAILED:',e.message));
