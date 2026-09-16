@@ -315,7 +315,7 @@ table.apbastat td{text-align:right;padding:0 1px;color:#C8342B;font-weight:700}
 </head>
 <body>
 <div class="app">
-<div class="build">build 2026-09-16 a</div>
+<div class="build">build 2026-09-16 b</div>
 <div id="gate" class="gate">
   <div class="gate-card">
     <div class="gate-title">APBA College Baseball</div>
@@ -599,7 +599,7 @@ function drawStarter(teamName, gtype){
   const pool=t.pitchers.filter(p=>!top.includes(p) && p.GS>0 && !rested(p));
   const lottery=(why)=>{
     const total=pool.reduce((s,p)=>s+p.GS,0);
-    if(!total){ const f=top[0]||t.pitchers[0]; return {p:f, note:`${f.name} — nobody else has a start`}; }
+    if(!total){ const any=t.pitchers.filter(p=>!rested(p)&&!top.includes(p)).sort((a,b)=>(b.IP||0)-(a.IP||0))[0]||t.pitchers.filter(p=>!rested(p))[0]||top[0]||t.pitchers[0]; return {p:any, note:`${any.name} — no rested starter; longest arm available`}; }
     let r=rnd(total);
     for(const p of pool){ r-=p.GS; if(r<0) return {p, note:`${why}${p.name} drawn by lottery (${p.GS} of ${total} chances)`}; }
     return {p:pool[pool.length-1], note:''};
@@ -652,8 +652,11 @@ const fld=()=>G.half===0?G.home:G.away;
 function endurance(p, starter=true){
   /* Starters: round(IP per appearance) + 1.  Relievers: IP per appearance
      rounded UP to the next inning, no +1 (David's ruling). */
-  const ipg=p.ipg||5;
-  return starter ? Math.round(ipg)+1 : Math.max(1, Math.ceil(ipg-1e-9));
+  /* David's ruling (Sep 16 2026): a starter's average innings per start, rounded
+     UP to the next whole inning (5.4 -> 6), is where he tires; relievers the same
+     on their innings per outing. */
+  const ipg=starter ? ((p.GS||0)>0 ? Math.min(p.IP/p.GS, p.ipg*1.6) : p.ipg) : p.ipg;
+  return Math.max(1, Math.ceil((ipg||1)-1e-9));
 }
 /* Each inning past endurance costs a FULL GRADE -- five points on the 1-30
    Master scale, not one.  A grade-12 starter goes 12 -> 7 -> 2. */
@@ -2554,16 +2557,25 @@ function hookCandidate(side){
   side.pitchers.forEach((p,i)=>{
     if(i===side.pIndex||side.used[i]) return;
     if((p.role||'').startsWith('SP')&&i<4 && !shelled) return;   // keep the rotation intact
-    if(!okay(i) && !shelled) return;
+    if(!okay(i)) return;                                     // locked is locked, shelled or not
     const mg=matchGrade(p,side.name,bat().name);
     if(mg>best){best=mg;bi=i}
   });
+  if(bi<0 && (shelled||past||faded)){
+    /* everyone locked: emergency -- the longest-rested arm, flagged */
+    let ei=-1, eb=-1;
+    side.pitchers.forEach((p,i)=>{ if(i===side.pIndex||side.used[i]) return; if((p.role||'').startsWith('SP')&&i<4&&!shelled) return;
+      const u=USAGE&&USAGE.teams&&USAGE.teams[side.name]&&USAGE.teams[side.name][p.name]; const last=u&&u.days&&u.days.length?u.days[u.days.length-1].date:'2000-01-01'; const rest=daysBetween(last,gameDate());
+      if(rest>eb){eb=rest;ei=i;} });
+    if(ei>=0){ side._emergency=ei; globalThis.EMERGENCIES=(globalThis.EMERGENCIES||0)+1; return ei; }
+  }
   if(bi<0) return -1;
   /* the pen has to be CLEARLY better -- a one-point edge is not worth a change */
   const margin = past||faded ? 0 : 3;
   return (shelled || past || faded || best>=eff+margin) ? bi : -1;
 }
 function makeChange(side,bi){
+  if(side._emergency===bi){ side._emergency=null; try{ addLog(`<i>${side.name}: emergency — every reliever is locked; ${side.pitchers[bi].name} pitches on short rest</i>`,'inn'); }catch(e){} }
   /* a fresh arm earns a fresh warning -- for THIS side only; clearing the
      whole map let the computer's change re-prompt the human about his man */
   for(const k of Object.keys(ASKED)) if(k.startsWith(side.name+'|')) delete ASKED[k];
@@ -2594,33 +2606,15 @@ function autoHook(){
 
 function cpuRelief(){
   const side=fld();
-  /* Only the computer's OWN staff.  This ran whenever the computer was at
-     bat, i.e. against the human's pitcher, and pulled him without asking. */
+  /* Only the computer's OWN staff. */
   if(COACH[(side===G.away)?'away':'home']!=='C') return;
-  if(side.pOuts<9) return;                         // let the starter work
-  const cur=side.pitchers[side.pIndex];
-  const eff=effGrade(cur,side.pOuts,side.pER,side.pIndex===0);
-  const spent=side.pOuts/3>endurance(cur, side.pIndex===0);
-  if(!spent && eff>=cur.grade) return;
-  side.used=side.used||{};
-  let best=-1,bi=-1;
-  side.pitchers.forEach((p,i)=>{
-    if(i===side.pIndex||side.used[i]) return;
-    if((p.role||'').startsWith('SP')) return;      // the pen, not another starter
-    const mg=matchGrade(p,side.name,bat().name);
-    if(mg>best){best=mg;bi=i}
-  });
-  if(bi>=0 && (best>eff || spent)){
-    side.used[side.pIndex]=1;
-    const outp=cur.name, inp=side.pitchers[bi].name;
-    const shelled=side.pER;          // was undefined here -- crashed every CPU change
-    side.pIndex=bi; side.pOuts=0; side.pER=0;
-    EVENTS.push({inn:G.inning,half:G.half,team:side.name,text:`Pitching change — ${inp} for ${outp}`});
-    const dv=document.createElement('div'); dv.className='inn';
-    dv.innerHTML=`Pitching change — ${inp} for ${outp}`
-    + (shelled>=MERCY_RUNS ? ` — ${shelled} runs` : '');
-    $('recap').appendChild(dv); $('recap').scrollTop=$('recap').scrollHeight;
-  }
+  /* The computer goes through the same door as the human's change prompt:
+     hookCandidate applies the endurance rule, the reliever locks (rest,
+     three-in-five, saved-for-start, season pace) and the emergency fallback.
+     The old path here picked the best grade regardless -- the reason a star
+     reliever could pitch every day. */
+  const bi=hookCandidate(side);
+  if(bi>=0) makeChange(side,bi);
 }
 
 /* one CPU turn: manage, then swing */
@@ -2870,7 +2864,8 @@ function showHookPrompt(side,bi){
   side.pitchers.forEach((p,i)=>{
     if(i===side.pIndex||side.used[i]) return;
     if((p.role||'').startsWith('SP')&&i<4) return;
-    opts+=`<option value="${i}" ${i===bi?'selected':''}>${p.name} (${throwsLtr(p)}) — Gr ${gradeStr(p)}, ${p.ERA} ERA</option>`;
+    const rr=restReason(side.name,p);
+    opts+=`<option value="${i}" ${i===bi?'selected':''} ${rr&&i!==bi?'disabled':''}>${p.name} (${throwsLtr(p)}) — Gr ${gradeStr(p)}, ${p.ERA} ERA${rr?' — '+rr:''}</option>`;
   });
   const el=$('hookprompt');
   el.hidden=false;
@@ -3044,12 +3039,12 @@ const SEASON_DB=(function(){
     setState:wrap(function(k,v){ LS.set('state_up_'+k,String(Date.now())); return tx('state','readwrite',s=>s.put(v,k)); }, (k,v)=>window.CLOUD&&CLOUD.setState(k,v)),
     delState:wrap(function(k){ LS.set('state_up_'+k,String(Date.now())); return tx('state','readwrite',s=>s.delete(k)); }, k=>window.CLOUD&&CLOUD.delState(k)),
     /* every pitcher's outings, for the game's rest rules */
-    usage(games){ const teams={}; let asOf='';
+    usage(games){ const teams={}, teamGames={}; let asOf='';
       for(const g of games){ if(g.date>asOf) asOf=g.date;
-        for(const side of ['away','home']){ const t=g[side]; const T=teams[t]||(teams[t]={});
+        for(const side of ['away','home']){ const t=g[side]; const T=teams[t]||(teams[t]={}); teamGames[t]=(teamGames[t]||0)+1;
           for(const p of (g.box&&g.box[side]&&g.box[side].pitching)||[]){ const u=T[p.name]||(T[p.name]={days:[],outs:0,apps:0}); u.days.push({date:g.date,outs:p.outs,gs:p.gs?1:0}); u.outs+=p.outs; u.apps++; } } }
       for(const T of Object.values(teams)) for(const u of Object.values(T)) u.days.sort((a,b)=>a.date.localeCompare(b.date));
-      return {format:'apba-college-baseball-usage/1',asOf,teams}; }
+      return {format:'apba-college-baseball-usage/1',asOf,teams,teamGames}; }
   };
 })();
 
@@ -3239,6 +3234,7 @@ function rpRemove(names,why){
 }
 function seasonGame(){ const f=gameFile(); delete f.story; return f; }
 function seasonRecord(){
+  try{ usageAdd(); }catch(e){}
   try{
     if(SIMMING){ const g=CUR_SIM; const f=seasonGame(); PENDING.push(seasonRecordCompact(f,g,false).catch(()=>{})); return; }
     const f=seasonGame(); let id=SEASON_DB.gid(f);
@@ -3325,7 +3321,8 @@ function ensureTeam(name){ if(D.teams[name]) return true; const T=nond1Team(name
 function dropNonD1(name){ if(D.teams[name]&&D.teams[name].nonD1){ delete D.teams[name]; for(const id of ['away','home']){ const sel=$(id); if(sel) [...sel.options].filter(o=>o.value===name&&o.dataset.nond1).forEach(o=>o.remove()); } } }
 let SEASON=null, SIMMING=false, CUR_SIM=null;
 const spGames=d=>SEASON_SCHED.filter(g=>g[1]===d&&g[1]<=SEASON_END);
-const spMine=d=>spGames(d).find(g=>g[2]===SEASON.team||g[3]===SEASON.team);
+const spMineAll=d=>spGames(d).filter(g=>g[2]===SEASON.team||g[3]===SEASON.team);
+const spMine=d=>{ const all=spMineAll(d); return all.find(g=>!SEASON.done[spKey(g)])||all[all.length-1]||null; };
 const spKey=g=>String(g[0]);
 function spDayKind(d){ const k=new Date(d+'T12:00:00').getDay(); return k===5?0:k===6?1:k===0?2:3; }
 function seasonSave(){ return SEASON_DB.setState('season',JSON.parse(JSON.stringify(SEASON))).catch(()=>{}); }
@@ -3333,13 +3330,13 @@ function seasonUI(){
   const P=$('seasonpanel'); if(!SEASON){ $('sp-setup').hidden=false; $('sp-day').hidden=true; $('sp-rec').textContent=''; $('sp-title').textContent='Season Mode'; return; }
   $('sp-setup').hidden=true; $('sp-day').hidden=false;
   const d=SEASON_DATES[SEASON.day]; const gs=spGames(d); const mine=spMine(d);
-  const done=gs.filter(g=>SEASON.done[spKey(g)]).length; const others=gs.filter(g=>g!==mine);
-  const othersDone=others.every(g=>SEASON.done[spKey(g)]); const mineDone=!mine||SEASON.done[spKey(mine)];
+  const mineAll=spMineAll(d); const others=gs.filter(g=>!mineAll.includes(g));
+  const othersDone=others.every(g=>SEASON.done[spKey(g)]); const mineDone=mineAll.every(g=>SEASON.done[spKey(g)]);
   const dt=new Date(d+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
   $('sp-title').textContent='Season Mode — '+SEASON.team; $('sp-rec').textContent=`${SEASON.w}-${SEASON.l}`;
   $('sp-datestr').textContent=dt+(SEASON.day>=SEASON_DATES.length-1?' (last day of the regular season)':'');
   let mineTxt='no game for '+SEASON.team;
-  if(mine){ const home=mine[3]===SEASON.team; const opp=home?mine[2]:mine[3]; mineTxt=`your game: ${home?'vs':'at'} ${opp}${mine[6]?' (non-D1)':''}${mineDone?' — played':''}`; }
+  if(mine){ const home=mine[3]===SEASON.team; const opp=home?mine[2]:mine[3]; const k=mineAll.indexOf(mine)+1; mineTxt=`your game${mineAll.length>1?` ${k} of ${mineAll.length}`:''}: ${home?'vs':'at'} ${opp}${mine[6]?' (non-D1)':''}${mineDone?' — played':''}`; }
   $('sp-slate').textContent=`· ${others.length} league game${others.length===1?'':'s'}${othersDone&&others.length?' (played)':''} · ${mineTxt}`;
   $('sp-league').disabled=SIMMING||othersDone||!others.length; $('sp-mine').disabled=SIMMING||!mine||mineDone||(G&&!G.over);
   $('sp-next').disabled=SIMMING||!(othersDone&&mineDone)||SEASON.day>=SEASON_DATES.length-1;
@@ -3361,7 +3358,7 @@ async function simGame(g){
     $('away').value=away; $('home').value=home; $('away').dispatchEvent(new Event('change')); $('home').dispatchEvent(new Event('change'));
     $('gdate').value=date; $('gtype').value=String(spDayKind(date));
     if($('lusrc')&&[...$('lusrc').options].some(o=>o.value==='real:'+id)){ $('lusrc').value='real:'+id; $('lusrc').dispatchEvent(new Event('change')); }
-    $('start').onclick(); let n=0; while(G&&!G.over&&n++<900) doPlay();
+    $('start').onclick(); if(G) G.gid=String(id); let n=0; while(G&&!G.over&&n++<900) doPlay();
     if(G&&G.over){ SEASON.done[String(id)]=1; }
   } finally {
     for(const f of stubs){ if(saved[f]){ try{ eval(f+'=saved[f]'); }catch(e){} } }
@@ -3372,7 +3369,7 @@ async function simGame(g){
 }
 async function seasonPlayLeague(){
   if(!SEASON) return; const d=SEASON_DATES[SEASON.day]; const mine=spMine(d);
-  const todo=spGames(d).filter(g=>g!==mine&&!SEASON.done[spKey(g)]); let n=0; const t0=Date.now();
+  const mineAll=spMineAll(d); const todo=spGames(d).filter(g=>!mineAll.includes(g)&&!SEASON.done[spKey(g)]); let n=0; const t0=Date.now();
   $('sp-league').disabled=true; $('sp-prog').textContent=`Playing ${todo.length} games…`;
   for(const g of todo){
     try{
@@ -3399,7 +3396,7 @@ function seasonPlayMine(){
   $('away').value=away; $('home').value=home; $('away').dispatchEvent(new Event('change')); $('home').dispatchEvent(new Event('change'));
   $('gdate').value=date; $('gtype').value=String(spDayKind(date));
   if($('lusrc')&&[...$('lusrc').options].some(o=>o.value==='real:'+id)){ $('lusrc').value='real:'+id; $('lusrc').dispatchEvent(new Event('change')); }
-  $('start').onclick(); $('sp-prog').textContent='Your game is set up in the ballpark. Roll for the batter.'; seasonUI();
+  $('start').onclick(); if(G) G.gid=String(id); $('sp-prog').textContent='Your game is set up in the ballpark. Roll for the batter.'; seasonUI();
   /* out of the way: the panel folds and the ballpark shows exactly as in a normal game; the Season button brings it back */
   $('seasonpanel').hidden=true; window.scrollTo({top:0,behavior:'smooth'});
 }
@@ -3453,22 +3450,54 @@ $('savegame').onclick=()=>{
    last four days sits; a starter is not used in relief within three days of
    a start.  Season innings are capped at 115% of his real total. */
 function daysBetween(a,b){ return Math.round((new Date(b+'T12:00:00Z')-new Date(a+'T12:00:00Z'))/86400000); }
+/* ══════════════════════════════════════════════════════════════════════
+   RELIEVER LIMITS (David's rulings, Sep 16 2026) — Season Mode only; a
+   one-off game has no history and everyone is fresh.  A pitcher who hits a
+   limit is locked for the computer and for you alike, with the reason shown.
+     Rest after an outing: ≤1 IP -> next day OK; ~2 IP -> 1 day off;
+       3 IP -> 2 days; ≥4 IP -> 3 days.
+     Never three days in a row; no more than 3 outings in any 5-day stretch.
+     A starter cannot relieve for 3 days after a start.
+     Saved for his start: a man with a real start in the next 3 days.
+     Season pace: after his team's 10th game, appearances and innings may not
+       run more than 15% ahead of his real 2026 pace, scaled to games played.
+   Emergency: if every arm is locked, the one longest rested pitches, marked.
+   ══════════════════════════════════════════════════════════════════════ */
+function teamRealGames(team){ return SEASON_SCHED.filter(g=>(g[2]===team||g[3]===team)&&g[1]<=SEASON_END).length||56; }
+function teamGamesPlayed(team){ const u=USAGE&&USAGE.teams&&USAGE.teams[team]; if(!u) return 0; const d=new Set(); for(const x of Object.values(u)) for(const y of (x.days||[])) d.add(y.date+'|'+(y.g||'')); return USAGE.teamGames&&USAGE.teamGames[team]!=null?USAGE.teamGames[team]:d.size; }
 function restReason(team,p){
+  if(!SEASON) return null;                       // limits live in Season Mode only
   if(!USAGE||!USAGE.teams||!USAGE.teams[team]) return null;
-  const u=USAGE.teams[team][p.name]; if(!u) return null;
-  const today=gameDate();
-  const days=(u.days||[]).filter(d=>d.date<today);
-  const back=n=>days.filter(d=>daysBetween(d.date,today)===n);
-  const y=back(1), y2=back(2);
-  if(y.length && y2.length) return 'pitched the last two days';
-  if(y.some(d=>d.outs>=6)) return 'threw '+IPstr(Math.max(...y.map(d=>d.outs)))+' yesterday';
-  if(days.filter(d=>daysBetween(d.date,today)<=4).length>=3) return 'three outings in four days';
-  const lastStart=days.filter(d=>d.gs).slice(-1)[0];
-  if(lastStart && daysBetween(lastStart.date,today)<=3) return 'started '+daysBetween(lastStart.date,today)+' day'+(daysBetween(lastStart.date,today)===1?'':'s')+' ago';
-  if((u.outs||0) > (p.IP||0)*3*1.15+9) return 'over his season innings';
+  const today=gameDate(); const u=USAGE.teams[team][p.name]||{days:[],outs:0,apps:0};
+  const days=(u.days||[]).filter(d=>d.date<=today).sort((a,b)=>a.date.localeCompare(b.date));
+  const since=d=>daysBetween(d.date,today);
+  const last=days[days.length-1];
+  if(last){
+    const ago=since(last); const need=last.outs<=3?0:last.outs<=6?1:last.outs<=9?2:3;
+    if(last.gs && ago<=3 && ago>=0) return `started ${ago===0?'today':ago+' day'+(ago===1?'':'s')+' ago'}`;
+    if(ago===0 && !last.gs) return 'pitched today';
+    if(ago>0 && ago<=need) return `threw ${IPstr(last.outs)} ${ago} day${ago===1?'':'s'} ago — needs ${need-ago+1} more day${need-ago+1===1?'':'s'}`;
+    if(days.some(d=>since(d)===1) && days.some(d=>since(d)===2)) return 'pitched the last two days';
+    if(days.filter(d=>since(d)>=0&&since(d)<=4).length>=3) return 'three outings in the last five days';
+  }
+  /* saved for his start */
+  const LUt=(typeof LU!=='undefined')&&LU[team]; if(LUt){ for(const g of Object.values(LUt.games||{})){ if(g.sp!==p.name) continue; const d2=g.date.slice(6)+'-'+g.date.slice(0,2)+'-'+g.date.slice(3,5); const dd=daysBetween(today,d2); if(dd>0&&dd<=3) return `starts in ${dd} day${dd===1?'':'s'}`; } }
+  /* season pace */
+  const gp=teamGamesPlayed(team);
+  if(gp>=10 && (p.G||0)>0){ const share=gp/teamRealGames(team); const allowApps=Math.ceil((p.G||0)*share*1.15)+1, allowOuts=Math.ceil((p.IP||0)*3*share*1.15)+3;
+    if((u.apps||0)>=allowApps) return `over his season pace (${u.apps} of ${p.G} outings)`;
+    if((u.outs||0)>=allowOuts) return `over his season innings (${IPstr(u.outs)} of ${p.IP})`; }
   return null;
 }
-globalThis.AVAILABLE=function(team,i,p){ return !restReason(team,p); };
+/* keep USAGE current while a season day is being simulated: append this game's pitching lines */
+function usageAdd(){
+  if(!G) return; USAGE=USAGE||{teams:{}}; USAGE.teams=USAGE.teams||{}; USAGE.teamGames=USAGE.teamGames||{};
+  const date=gameDate();
+  for(const side of [G.away,G.home]){ const T=USAGE.teams[side.name]||(USAGE.teams[side.name]={}); USAGE.teamGames[side.name]=(USAGE.teamGames[side.name]||0)+1;
+    side.pitchers.forEach((p,i)=>{ const q=GAMEP[side.name+'|'+p.name]; if(!q) return; const u=T[p.name]||(T[p.name]={days:[],outs:0,apps:0}); u.days.push({date,outs:q.outs,gs:i===0?1:0,g:G.gid||''}); u.outs+=q.outs; u.apps++; }); }
+}
+/* the script declares its own AVAILABLE binding above; setting the window property left that binding null, so the computer never saw the locks -- assign the binding itself */
+AVAILABLE=function(team,i,p){ return !restReason(team,p); };
 $('usagefile').addEventListener('change',e=>{
   const f=e.target.files[0]; if(!f) return;
   const rd=new FileReader(); rd.onload=()=>{ try{ USAGE=JSON.parse(rd.result); USAGE.fromFile=true; $('hint').textContent=`Season usage loaded (through ${USAGE.asOf||'?'}).`; renderField(); }catch(err){ $('hint').textContent='Could not read that usage file.'; } };
