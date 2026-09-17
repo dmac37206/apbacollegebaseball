@@ -35,7 +35,7 @@ const same=(a,b)=>{ const x=canon(a), y=canon(b); return x===y || x.startsWith(y
 const SB_SHA='4bcb5e6432fa9da365c0c19af01b1f9015cc7eb5c21e7af2dba308784a166df7';
 async function scoreboard(date){
   /* the day's games from ncaa.com's own data call (the scoreboard page draws its list from this) */
-  const key='ncaa_sb2_'+date; const c=await KV.get(key); if(c) return c;
+  const key='ncaa_sb2_'+date; SBC=window.SBC||(window.SBC={}); if(SBC[key]) return SBC[key]; const c=await KV.get(key).catch(()=>null); if(c){ SBC[key]=c; return c; }
   const [y,m,d]=date.split('-');
   const url='https://sdataprod.ncaa.com/?meta=GetContests_web&extensions='+encodeURIComponent(JSON.stringify({persistedQuery:{version:1,sha256Hash:SB_SHA}}))+'&variables='+encodeURIComponent(JSON.stringify({sportCode:'MBA',division:1,seasonYear:2025,contestDate:`${m}/${d}/${y}`,week:null}));
   const res=await fetch(url); if(res.status!==200) throw new Error('scoreboard '+res.status);
@@ -43,7 +43,7 @@ async function scoreboard(date){
   for(const g of list){ const teams=g.teams||[]; const home=teams.find(t=>t.isHome), away=teams.find(t=>!t.isHome); if(!home||!away) continue;
     pods.push({id:String(g.contestId||g.id||''),away:away.nameShort||away.name||'',home:home.nameShort||home.name||'',as:away.score!=null?Number(away.score):null,hs:home.score!=null?Number(home.score):null}); }
   if(!pods.length) console.log('scoreboard returned no games; raw:',JSON.stringify(j).slice(0,500));
-  await KV.set(key,pods); return pods;
+  SBC[key]=pods; KV.set(key,pods).catch(()=>{}); return pods;
 }
 async function box(id){
   const url='https://sdataprod.ncaa.com/?meta=NCAA_GetGamecenterBoxscoreBaseballById_web&extensions='+encodeURIComponent(JSON.stringify({persistedQuery:{version:1,sha256Hash:SHA}}))+'&variables='+encodeURIComponent(JSON.stringify({contestId:String(id)}));
@@ -61,35 +61,42 @@ function rows(gid,ncaaId,date,bx){
   }
   return out;
 }
+const PART=150;
+function download(name,text){ const blob=new Blob([text],{type:'text/tab-separated-values'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>a.remove(),1000); }
+const HDR='game_id\tncaa_id\tdate\tteam\tside\tkind\torder\tname\tnumber\tpos\tstarter\tc1\tc2\tc3\tc4\tc5\tc6';
 async function run(conf){
-  /* 'ALL' = every regular-season game (through May 17) not already pulled in a conference run */
   let ids=CONF[conf];
-  if(conf==='ALL'){ const done=new Set(); for(const c of Object.keys(CONF)){ const st=await loadState(c); for(const k of Object.keys(st.done)) done.add(k); }
+  if(conf==='ALL'){ const done=new Set(); for(const c of Object.keys(CONF)){ const st=await loadState(c).catch(()=>({done:{}})); for(const k of Object.keys(st.done)) done.add(k); }
     ids=Object.keys(SCHED).filter(k=>SCHED[k][0]<='2026-05-17'&&!done.has(k)).map(Number); }
   if(!ids){ console.log('unknown conference; NCAA.list()'); return; }
-  const key='ncaa2_'+conf; const st=await loadState(conf); let dirty=0;
+  const key='ncaa2_'+conf; const st=await loadState(conf).catch(()=>({done:{},miss:[]})); st.miss=st.miss||[];
+  /* anything still sitting in the browser store from earlier runs goes out as part 0 */
+  let part=Number(localStorage.getItem('ncaa_part_'+conf)||0); const stored=[];
+  for(const gid of ids){ if(st.done[gid]){ const r=await KV.get('g_'+gid).catch(()=>null); if(r){ stored.push(...r); KV.del('g_'+gid).catch(()=>{}); } } }
+  if(stored.length){ download(`lineups_${conf.replace(/[^A-Za-z0-9]+/g,'_')}_part${part}.tsv`,HDR+'\n'+stored.join('\n')); console.log(conf,'part',part,'downloaded from the browser store:',stored.length,'rows'); part++; localStorage.setItem('ncaa_part_'+conf,String(part)); }
   const todo=ids.filter(i=>!st.done[i]); console.log(conf,ids.length,'games,',todo.length,'to fetch'); let n=0; const t0=Date.now();
+  let buf=[], bufDone=[];
+  const flush=async(final)=>{ if(!buf.length&&!final) return; if(buf.length){ download(`lineups_${conf.replace(/[^A-Za-z0-9]+/g,'_')}_part${part}.tsv`,HDR+'\n'+buf.join('\n')); console.log(conf,'part',part,'downloaded:',buf.length,'rows'); part++; localStorage.setItem('ncaa_part_'+conf,String(part)); }
+    for(const g of bufDone) st.done[g]=1; buf=[]; bufDone=[]; try{ localStorage.setItem(key,JSON.stringify({done:st.done,miss:st.miss})); }catch(e){} try{ await KV.set(key,{done:st.done,miss:st.miss}); }catch(e){} };
   for(const gid of todo){
     const g=SCHED[gid]; if(!g){ st.done[gid]=1; continue; } const [date,away,home,ar,hr]=g;
     try{
       const pods=await scoreboard(date);
       let cand=pods.filter(p=>same(p.away,away)&&same(p.home,home)); if(!cand.length) cand=pods.filter(p=>same(p.away,home)&&same(p.home,away));
       if(cand.length>1&&ar!==null) cand=cand.filter(p=>(p.as===ar&&p.hs===hr)||(p.as===hr&&p.hs===ar)).concat(cand).slice(0,1);
-      if(!cand.length){ st.miss.push(`${gid}\t${date}\t${away}\t${home}\tnot on scoreboard`); st.done[gid]=1; await KV.set(key,st); continue; }
-      const bx=await box(cand[0].id); if(!bx||!bx.teamBoxscore){ st.miss.push(`${gid}\t${date}\t${away}\t${home}\tno box (${cand[0].id})`); st.done[gid]=1; await KV.set(key,st); await sleep(DELAY); continue; }
-      await KV.set('g_'+gid,rows(gid,cand[0].id,date,bx)); st.done[gid]=1; n++; if(++dirty%5===0) await KV.set(key,st);
-      if(n%25===0) console.log(conf,'done',Object.keys(st.done).length,'of',ids.length,((Date.now()-t0)/1000).toFixed(0)+'s');
+      if(!cand.length){ st.miss.push(`${gid}\t${date}\t${away}\t${home}\tnot on scoreboard`); bufDone.push(gid); continue; }
+      const bx=await box(cand[0].id); if(!bx||!bx.teamBoxscore){ st.miss.push(`${gid}\t${date}\t${away}\t${home}\tno box (${cand[0].id})`); bufDone.push(gid); await sleep(DELAY); continue; }
+      buf.push(...rows(gid,cand[0].id,date,bx)); bufDone.push(gid); n++;
+      if(n%25===0) console.log(conf,'done',n,'of',todo.length,((Date.now()-t0)/1000).toFixed(0)+'s');
+      if(bufDone.length>=PART) await flush(false);
     }catch(e){ console.log('error on',gid,e.message,'— pausing 15 s'); await sleep(15000); }
     await sleep(DELAY);
   }
-  await KV.set(key,st);
-  const allRows=[]; for(const gid of ids){ if(!st.done[gid]) continue; const r=await KV.get('g_'+gid); if(r) allRows.push(...r); }
-  const hdr='game_id\tncaa_id\tdate\tteam\tside\tkind\torder\tname\tnumber\tpos\tstarter\tc1\tc2\tc3\tc4\tc5\tc6';
-  const text=hdr+'\n'+allRows.join('\n')+(st.miss.length?'\n# unmatched\n'+st.miss.join('\n'):'');
-  const blob=new Blob([text],{type:'text/tab-separated-values'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='lineups_'+conf.replace(/[^A-Za-z0-9]+/g,'_')+'.tsv'; document.body.appendChild(a); a.click();
-  console.log('DONE',conf,Object.keys(st.done).length,'games;',allRows.length,'rows;',st.miss.length,'unmatched — file downloaded');
+  await flush(true);
+  if(st.miss.length) download(`lineups_${conf.replace(/[^A-Za-z0-9]+/g,'_')}_unmatched.txt`,st.miss.join('\n'));
+  console.log('DONE',conf,'—',n,'games this run;',st.miss.length,'unmatched; parts downloaded through part',part-1);
 }
-return {run,list:()=>console.log(Object.keys(CONF).sort().map(c=>c+' ('+CONF[c].length+')').join('\n')),reset:c=>{ localStorage.removeItem('ncaa2_'+c); KV.del('ncaa2_'+c); Object.keys(localStorage).filter(k=>k.startsWith('ncaa_sb')).forEach(k=>localStorage.removeItem(k)); },scoreboard,box};
+return {run,list:()=>console.log(Object.keys(CONF).sort().map(c=>c+' ('+CONF[c].length+')').join('\n')),reset:c=>{ localStorage.removeItem('ncaa2_'+c); localStorage.removeItem('ncaa_part_'+c); KV.del('ncaa2_'+c); Object.keys(localStorage).filter(k=>k.startsWith('ncaa_sb')).forEach(k=>localStorage.removeItem(k)); },scoreboard,box};
 })();
-console.log('puller v6 loaded (one record per game). NCAA.run("ALL") pulls every remaining regular-season game (~2 h, resumable); NCAA.list() for single conferences.');
+console.log('puller v7 loaded (part files every 150 games; nothing big kept in the browser). NCAA.run("ALL") pulls every remaining regular-season game (~2 h, resumable); NCAA.list() for single conferences.');
 NCAA.scoreboard('2026-02-13').then(p=>console.log('self-check:',p.length,'games on 2026-02-13',p.length?JSON.stringify(p[0]):'')).catch(e=>console.log('self-check FAILED:',e.message));
