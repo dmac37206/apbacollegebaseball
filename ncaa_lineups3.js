@@ -21,6 +21,111 @@ async function loadState(conf){ const key='ncaa2_'+conf; try{ const ls=localStor
 const PART=150;
 function download(name,text){ const blob=new Blob([text],{type:'text/tab-separated-values'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>a.remove(),1000); }
 const HDR='game_id\tncaa_id\tdate\tteam\tside\tkind\torder\tname\tnumber\tpos\tstarter\tc1\tc2\tc3\tc4\tc5\tc6';
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+/* fuzzy team-name match -- ncaa.com's scoreboard names ("Ohio St.") and our schedule
+   names ("Ohio State") don't always match verbatim, so normalize and allow either
+   side to be a substring of the other. */
+function same(a,b){
+  const norm=s=>String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  const na=norm(a), nb=norm(b);
+  if(!na||!nb) return false;
+  if(na===nb) return true;
+  return na.includes(nb)||nb.includes(na);
+}
+async function gql(hash,variables){
+  const url='https://sdataprod.ncaa.com/?extensions='+encodeURIComponent(JSON.stringify({persistedQuery:{version:1,sha256Hash:hash}}))+'&variables='+encodeURIComponent(JSON.stringify(variables));
+  const res=await fetch(url);
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  const json=await res.json();
+  if(json.errors&&json.errors.length) throw new Error(json.errors[0].message||'GraphQL error');
+  return json.data;
+}
+/* persisted-query hash for the all-sports "contests" (scoreboard) query -- this is the
+   same one ncaa.com's own scoreboard pages call, independent of sport. */
+const SB_SHA='7287cda610a9326931931080cb3a604828febe6fe3c9016a7e4a36db99efdb7c';
+/* NCAA's season year flips in August: a Feb 2026 game belongs to the "2025" season. */
+function seasonYearFor(dateStr){ const [y,m]=dateStr.split('-').map(Number); return (m-1)<7?y-1:y; }
+const _sbCache={};
+async function scoreboard(date){
+  if(_sbCache[date]) return _sbCache[date];
+  const [y,m,d]=date.split('-');
+  const p=gql(SB_SHA,{sportCode:'MBA',division:1,seasonYear:seasonYearFor(date),contestDate:y+'/'+m+'/'+d})
+    .then(data=>(data.contests||[]).map(c=>{
+      const teams=c.teams||[];
+      const home=teams.find(t=>t.isHome)||teams[0]||{};
+      const away=teams.find(t=>!t.isHome)||teams[1]||{};
+      return {id:c.contestId,home:home.nameShort||home.name6Char||'',away:away.nameShort||away.name6Char||'',
+              hs:home.score!=null?Number(home.score):null,as:away.score!=null?Number(away.score):null};
+    }))
+    .catch(e=>{ delete _sbCache[date]; throw e; });
+  _sbCache[date]=p;
+  return p;
+}
+/* box score -- SHA is the baseball TeamStatsBaseball persisted-query hash. */
+async function box(gameId){
+  const data=await gql(SHA,{contestId:String(gameId),staticTestEnv:null});
+  return data&&data.boxscore;
+}
+let _boxShapeLogged=false;
+function pick(o,keys){ for(const k of keys){ if(o&&o[k]!=null&&o[k]!=='') return o[k]; } return ''; }
+function playerName(p){
+  const a=p.athlete||p.player||p;
+  const first=pick(a,['firstName','first_name']), last=pick(a,['lastName','last_name']);
+  if(first||last) return (first+' '+last).trim();
+  return pick(a,['fullName','displayName','name'])||'';
+}
+function playerNumber(p){ const a=p.athlete||p.player||p; return String(pick(a,['jerseyNumber','jersey','number','uniformNumber'])||''); }
+function playerPos(p){
+  const a=p.athlete||p.player||p; const pos=a.position||a.positions;
+  if(Array.isArray(pos)) return pos.map(x=>(x&&(x.abbreviation||x.name))||x).join('/');
+  if(pos&&typeof pos==='object') return pos.abbreviation||pos.name||'';
+  return pos||'';
+}
+function statValues(p){
+  const stats=p.stats||p.playerStats||p.statistics||[];
+  if(Array.isArray(stats)) return stats.slice(0,6).map(s=>{ if(s==null) return ''; if(typeof s!=='object') return s;
+    const v=s.displayValue!=null?s.displayValue:(s.value!=null?s.value:''); return v; });
+  return [];
+}
+/* Builds TSV rows for one game from its box-score JSON. NCAA's GraphQL box-score shape
+   isn't something this scraper can be tested against from a sandbox (no live network
+   access here), so this reads several plausible field names defensively; if a game's
+   shape doesn't match, it's skipped and logged rather than emitting garbage rows. On
+   the very first game it also logs a compact shape summary once, so a bad mapping can
+   be spotted and fixed from real console output in one round-trip instead of guessing. */
+function rows(gid,ncaaId,date,bx){
+  const out=[];
+  const teams=(bx&&bx.teamBoxscore)||[];
+  if(!_boxShapeLogged){
+    _boxShapeLogged=true;
+    try{
+      console.log('[box shape] teamBoxscore top-level keys:', teams[0]?Object.keys(teams[0]):'(none)');
+      const t0=teams[0]||{}; const players0=t0.playerStats||t0.players||t0.roster||[];
+      console.log('[box shape] first player keys:', players0[0]?Object.keys(players0[0]):'(none)', players0[0]);
+    }catch(e){}
+  }
+  teams.forEach((tb,ti)=>{
+    const teamInfo=tb.team||tb;
+    const teamName=pick(teamInfo,['nameShort','name6Char','seoname','name'])||('team'+ti);
+    const side=teamInfo.isHome===true?'home':(teamInfo.isHome===false?'away':(ti===0?'away':'home'));
+    const players=tb.playerStats||tb.players||tb.roster||[];
+    players.forEach((p,i)=>{
+      const name=playerName(p);
+      if(!name) return;
+      const kind=p.kind||p.group||((p.pitching||p.isPitcher)?'pitching':'batting');
+      const order=pick(p,['battingOrder','order','lineupOrder'])||(i+1);
+      const number=playerNumber(p);
+      const pos=playerPos(p);
+      const starter=(p.starter===true||p.isStarter===true||p.gs==='1'||p.gs===1)?'1':'0';
+      const stats=statValues(p);
+      const c=[0,1,2,3,4,5].map(j=>stats[j]!=null?stats[j]:'');
+      out.push([gid,ncaaId,date,teamName,side,kind,order,name,number,pos,starter,...c].join('\t'));
+    });
+  });
+  if(!out.length) console.log('[rows] no players parsed for game',gid,'-- box shape may not match; see [box shape] log above');
+  return out;
+}
+
 async function run(conf){
   let ids=CONF[conf];
   if(conf==='ALL'){ const done=new Set(); for(const c of Object.keys(CONF)){ const st=await loadState(c).catch(()=>({done:{}})); for(const k of Object.keys(st.done)) done.add(k); }
@@ -52,5 +157,5 @@ async function run(conf){
 }
 return {run,list:()=>console.log(Object.keys(CONF).sort().map(c=>c+' ('+CONF[c].length+')').join('\n')),reset:c=>{ localStorage.removeItem('ncaa2_'+c); localStorage.removeItem('ncaa_part_'+c); Object.keys(localStorage).filter(k=>k.startsWith('ncaa_sb')).forEach(k=>localStorage.removeItem(k)); },scoreboard,box};
 })();
-console.log('puller v8 loaded (part files every 150 games; no browser database). NCAA.run("ALL") pulls every remaining regular-season game (~2 h, resumable); NCAA.list() for single conferences.');
+console.log('puller v9 loaded (restored missing scoreboard/box/rows/same/sleep helpers; part files every 150 games; no browser database). NCAA.run("ALL") pulls every remaining regular-season game (~2 h, resumable); NCAA.list() for single conferences.');
 NCAA.scoreboard('2026-02-13').then(p=>console.log('self-check:',p.length,'games on 2026-02-13',p.length?JSON.stringify(p[0]):'')).catch(e=>console.log('self-check FAILED:',e.message));
