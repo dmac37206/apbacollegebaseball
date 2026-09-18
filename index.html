@@ -315,7 +315,7 @@ table.apbastat td{text-align:right;padding:0 1px;color:#C8342B;font-weight:700}
 </head>
 <body>
 <div class="app">
-<div class="build">build 2026-09-16 d</div>
+<div class="build">build 2026-09-18 a</div>
 <div id="gate" class="gate">
   <div class="gate-card">
     <div class="gate-title">APBA College Baseball</div>
@@ -809,7 +809,16 @@ function letters(n,p,sit,fcolumn){
     const cell=(D.cellK||{})[sit+'|'+n+'|'+fcolumn] || (D.cellK||{})[sit+'|'+n+'|2'];
     if(cell && [...cell].some(x=>L.includes(x))) return 13;
   }
-  if([36,37,38,39,40].includes(n) && (p.BB_l||'')==='W') return 14;
+  const bb=p.BB_l||'';
+  /* W (wild): results 12 and 35 are OUT on every board/situation (36-40 are
+     RP/NOPA/OTHER triggers and must not be hijacked into a walk), so a wild
+     pitcher's extra walk comes off those two cells instead. */
+  if(bb==='W' && (n===12 || n===35)) return 14;
+  /* Z/ZZ (control): the walk cell (14) converts back to an out on the board
+     cells where the notation is actually printed -- D.zcells, built from the
+     transcription but never wired in until now. Covers empty/1B/2B/1B2B/loaded;
+     no cell is printed for a runner on 3rd (3B/1B3B/2B3B), so it doesn't fire there. */
+  if((bb==='Z'||bb==='ZZ') && n===14 && (D.zcells||{})[sit+'|14']) return 12;
   return n}
 
 /* ══════════════════════════════════════════════════════════════════════
