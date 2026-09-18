@@ -2,7 +2,7 @@
    Page files (index.html, season.html, manifest) are NETWORK-FIRST so a new
    build shows on the next open; everything else (fonts, icons, the Firebase
    scripts) is cache-first so the app still opens offline. */
-const CACHE = 'apba-cb-2026-09-16-c';
+const CACHE = 'apba-cb-2026-09-16-d';
 const CORE = ['./','./index.html','./season.html','./manifest.json',
               './icon-180.png','./icon-192.png','./icon-512.png'];
 const FRESH = /\/(index\.html|season\.html|manifest\.json)?(\?.*)?$/;

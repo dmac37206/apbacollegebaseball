@@ -315,7 +315,7 @@ table.apbastat td{text-align:right;padding:0 1px;color:#C8342B;font-weight:700}
 </head>
 <body>
 <div class="app">
-<div class="build">build 2026-09-16 c</div>
+<div class="build">build 2026-09-16 d</div>
 <div id="gate" class="gate">
   <div class="gate-card">
     <div class="gate-title">APBA College Baseball</div>
@@ -1727,7 +1727,13 @@ function fillLineupSources(){
   const a=$('away').value, h=$('home').value, meetings=[];
   for(const [tn,other] of [[a,h],[h,a]]){ const d=LU[tn]; if(!d) continue;
     for(const [gid,g] of Object.entries(d.games)) if(g.opp===other && !meetings.some(m=>m.gid===gid)) meetings.push({gid,tn,g}); }
-  meetings.sort((x,y)=>x.g.date.slice(6)+x.g.date.slice(0,5) < y.g.date.slice(6)+y.g.date.slice(0,5) ? -1 : 1);
+  /* Same-date doubleheaders tie on date, and the old comparator returned 1
+     for a tie (never 0) -- an invalid ordering that could show either game
+     as the default depending on the engine.  Season Mode sets the exact
+     game explicitly, so this only ever affected the picker's own default,
+     but a tie now breaks on game id (NCAA ids run in the order the games
+     were entered, so the earlier game of a doubleheader sorts first). */
+  meetings.sort((x,y)=>{ const dx=x.g.date.slice(6)+x.g.date.slice(0,5), dy=y.g.date.slice(6)+y.g.date.slice(0,5); if(dx!==dy) return dx<dy?-1:1; return Number(x.gid)-Number(y.gid); });
   let s='';
   meetings.forEach(m=>{ s+=`<option value="real:${m.gid}">Real ${m.g.date} — ${m.tn} ${m.g.result}</option>`; });
   const any=!!(LU[a]||LU[h]);
