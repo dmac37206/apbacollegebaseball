@@ -315,7 +315,7 @@ table.apbastat td{text-align:right;padding:0 1px;color:#C8342B;font-weight:700}
 </head>
 <body>
 <div class="app">
-<div class="build">build 2026-09-18 a</div>
+<div class="build">build 2026-09-18 d</div>
 <div id="gate" class="gate">
   <div class="gate-card">
     <div class="gate-title">APBA College Baseball</div>
@@ -643,7 +643,7 @@ function mkTeam(n,side){const t=D.teams[n];
           pER:0,          // earned runs charged to him this outing
           pIndex:0}}
 function newGame(a,h){return {away:mkTeam(a,'away'),home:mkTeam(h,'home'),inning:1,half:0,outs:0,
-  bases:[null,null,null],over:false,rid:0}}
+  bases:[null,null,null],cleanBases:[null,null,null],cleanOuts:0,over:false,rid:0}}
 const bat=()=>G.half===0?G.away:G.home;
 const fld=()=>G.half===0?G.home:G.away;
 /* Endurance: a pitcher works his usual length plus one inning at full grade,
@@ -1293,6 +1293,7 @@ function resolveRPVars(B,st,sit,rp,col,num){
     if(enc.err || tok.some(t=>t.startsWith('e-'))) fld().E++;
     return;
   }
+  st._usedTok=tok;                    // so the earned-run replay can reuse the exact tokens
   applyEffects(tok,st,sit,num);
   if(st.kind===null) st.kind='OUT';
 }
@@ -1305,7 +1306,7 @@ function resolveRP(B,st,sit,f,num){
   st.rpLabel=L.text; st.rpNum=rp; st.rpDice=d; st.rpCol=col;
   if(B.vars){ resolveRPVars(B,st,sit,rp,col,num); return; }
   const R=(sit==='empty')?L.res:null;
-  if(!R){ applyEffects(L.eff,st,sit,num); if(st.kind===null) st.kind=L.kind; return; }
+  if(!R){ st._usedTok=L.eff; applyEffects(L.eff,st,sit,num); if(st.kind===null) st.kind=L.kind; return; }
   if(R.kind.indexOf('NOPA')===0){ st.kind='NOPA'; st.rebat=true; return; }
   if(R.out) st.outs += R.out;
   if(R.bt===3){ st.runs++; st.scored.push(st.batter); }
@@ -1321,6 +1322,55 @@ function resolveRP(B,st,sit,f,num){
     for(const k in R[b]) if(B.lines[k]) B.lines[k].res=R[b][k];
   }
 })();
+/* ══════════════════════════════════════════════════════════════════════
+   EARNED RUNS.  The board tags which advances are the CONSEQUENCE of a
+   misplay: unearned_move-* is a base a bad throw or a dropped ball handed
+   the offense on top of the move-* the defense should have allowed, and a
+   bare e- token (no hit alongside it) is a batter who reaches purely on an
+   error.  Replaying every plate appearance a second time with those tokens
+   stripped, against a second set of bases/outs that runs alongside the
+   real ones (G.cleanBases/G.cleanOuts), reconstructs the inning the way an
+   official scorer does: a run that still scores in that clean replay is
+   earned; one that only scores because of the stripped tokens -- or after
+   the clean replay's own third out -- is not.  The rare-play boards carry
+   no such tagging (none of their effect lists use unearned_move), so a
+   rare-play result is earned unless it is itself an error, in which case
+   the batter is an out in the clean version and every other runner's fate
+   (advance, score, or put out) is copied over as-is.
+   ══════════════════════════════════════════════════════════════════════ */
+function stripUnearned(tok){
+  return tok.filter(t=>{ const s=String(t); return !s.startsWith('unearned_move-') && s!=='e' && !s.startsWith('e-'); });
+}
+function applyEffectsClean(tok,sit,num,batter){
+  if(G.cleanOuts>=3) return {bases:G.cleanBases,outs:G.cleanOuts,runs:0,scored:[]};
+  const cst={bases:G.cleanBases.slice(),outs:G.cleanOuts,runs:0,batter,scored:[],kind:null,rp:false};
+  applyEffects(stripUnearned(tok),cst,sit,num);
+  G.cleanBases=cst.bases; G.cleanOuts=cst.outs;
+  return cst;
+}
+function mirrorClean(beforeActual,afterActual,actualScored,kind,batter,reachedActual){
+  if(G.cleanOuts>=3) return [];                 // the clean inning is already over
+  const cleanBefore=G.cleanBases.slice();
+  const cleanAfter=[null,null,null];
+  let addOuts=0, scored=[];
+  for(let i=0;i<3;i++){
+    const who=cleanBefore[i]; if(!who) continue;
+    const src=beforeActual.indexOf(who);
+    if(src<0){ cleanAfter[i]=who; continue; }    // wasn't part of this play at all
+    if(actualScored.includes(beforeActual[src])){ scored.push(who); continue; }
+    const dest=afterActual.indexOf(beforeActual[src]);
+    if(dest<0){ addOuts++; continue; }           // put out on the bases -- same in the clean version
+    cleanAfter[dest]=who;
+  }
+  if(kind==='E'){ addOuts++; }                   // reached purely on an error -- an out in the clean version
+  else if(reachedActual && batter){
+    if(actualScored.includes(batter)) scored.push(batter);
+    else { const d=afterActual.indexOf(batter); if(d>=0 && cleanAfter[d]==null) cleanAfter[d]=batter; }
+  }
+  G.cleanBases=cleanAfter;
+  G.cleanOuts=Math.min(3,G.cleanOuts+addOuts);
+  return scored;
+}
 function plateAppearance(){
   const b=bat(),h=b.hitters[b.spot%b.hitters.length],p=curP(),sit=sitOf();
   const cr=platoonAdj(h,p,cardResult(h));
@@ -1344,7 +1394,7 @@ function plateAppearance(){
   /* Runners carry a unique id, not a name: a hitter can reach base twice in a
      long inning and tracking by name put the same man on two bases at once. */
   const st={bases:G.bases.slice(),outs:G.outs,runs:0,
-            batter:{id:++G.rid,name:h.name},scored:[],kind:null,rp:false,
+            batter:{id:++G.rid,name:h.name,pitcher:p.name},scored:[],kind:null,rp:false,
             _fcol:(num<=14?1:f),_ax:AX};
   applyEffects(eff,st,sit,num);
   if(st.rp){
@@ -1362,6 +1412,25 @@ function plateAppearance(){
     st.kind=o==='NOPA'?'—':o}
     }
   if(st.kind===null)st.kind='OUT';
+  /* Earned-run reconstruction -- see stripUnearned()/applyEffectsClean()/
+     mirrorClean() above -- has to run BEFORE G.bases/G.outs are overwritten
+     with this play's result, since it needs the bases as they stood going
+     into the play. */
+  if(st.rp){
+    if(st._usedTok){
+      /* resolveRP/resolveRPVars resolved this through applyEffects too --
+         reuse the SAME tokens for an exact replay, not the cruder mirror. */
+      st.earnedScored=applyEffectsClean(st._usedTok,sit,num,st.batter).scored;
+    } else {
+      /* the no-plate-appearance branch of a rare-play board moves runners by
+         hand and never calls applyEffects, so there is no token list to
+         replay -- fall back to copying the actual fate onto the clean bases. */
+      const reachedActual=st.bases.includes(st.batter);
+      st.earnedScored=mirrorClean(G.bases,st.bases,st.scored,st.kind,st.batter,reachedActual);
+    }
+  } else {
+    st.earnedScored=applyEffectsClean(eff,sit,num,st.batter).scored;
+  }
   const D_=fld(); D_.pOuts += (st.outs - (G.outs));   // outs this play
   D_.pER += st.runs;                                  // and the runs he gave up
   G.bases=st.bases;G.outs=st.outs;b.R+=st.runs;
@@ -1685,7 +1754,7 @@ function doPlay(){
 function endHalf(){
   const b=bat(),i=G.inning-1;
   b.line[i]=(b.line[i]||0)+(b.R-b._prev);b._prev=b.R;
-  G.outs=0;G.bases=[null,null,null];
+  G.outs=0;G.bases=[null,null,null];G.cleanOuts=0;G.cleanBases=[null,null,null];
   addLog(`— end ${G.half===0?'top':'bottom'} ${G.inning} —`,'inn');
   if(G.half===0){
     G.half=1;
@@ -2704,13 +2773,20 @@ function recordPA(r,fteam,pname,bteam){
   }
   for(const [st,bl] of [[GAMEP,blankPit]]){
     const p=bump(st,fteam+'|'+pname,fteam,bl);
-    p.r+=r.st.runs; p.er+=r.st.runs;
     if(['1B','2B','3B','HR'].includes(k))p.h++;
     if(k==='HR')p.hr++; if(k==='BB')p.bb++; if(k==='K')p.k++;
   }
-  // runs scored by whoever crossed the plate
+  /* Runs are charged to whoever put the runner on base -- not necessarily
+     whoever is on the mound when he scores -- and earned only when the
+     clean (error-free) reconstruction of the inning also scores him; see
+     the earned-run reconstruction above plateAppearance(). */
+  const earned=r.st.earnedScored||[];
   (r.st.scored||[]).forEach(x=>{
     const b=bump(GAMEB,bteam+'|'+x.name,bteam,blankBat); b.r++;
+    const creditTo=x.pitcher||pname;
+    const pp=bump(GAMEP,fteam+'|'+creditTo,fteam,blankPit);
+    pp.r++;
+    if(earned.includes(x)) pp.er++;
   });
 }
 function recordOuts(pname,fteam,n){
@@ -3172,7 +3248,7 @@ const CLOUD=(function(){
       for(const d of snap.docs){ const g=d.data(); const up=g.updated&&g.updated.toMillis?g.updated.toMillis():0; if(up>newest) newest=up; delete g.updated;
         if(!localIds.has(g.id)){ await SEASON_DB.put(g,{noCloud:true}); pulled++; localIds.add(g.id); } }
       /* local games the cloud does not have: cheap check by id list */
-      const ids=await col().select('id').get().catch(()=>null);   // one read per doc, but only ids
+      const ids=await col().get().catch(()=>null);   // select() isn't in the browser SDK -- full docs, not just ids
       let pushed=0;
       if(ids){ const cloudIds=new Set(ids.docs.map(d=>d.get('id'))); const missing=local.filter(g=>!cloudIds.has(g.id)); if(missing.length){ await putGames(missing); pushed=missing.length; } }
       /* season position and suspended game: newest wins */
