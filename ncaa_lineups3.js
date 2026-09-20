@@ -54,7 +54,11 @@ async function scoreboard(date){
       const teams=c.teams||[];
       const home=teams.find(t=>t.isHome)||teams[0]||{};
       const away=teams.find(t=>!t.isHome)||teams[1]||{};
+      /* teamId here is what the box-score query's teamBoxscore entries carry (they
+         have no name field at all, only teamId) -- keep it so rows() can resolve
+         each teamBoxscore back to a real name without guessing array order. */
       return {id:c.contestId,home:home.nameShort||home.name6Char||'',away:away.nameShort||away.name6Char||'',
+              homeId:home.teamId!=null?String(home.teamId):null, awayId:away.teamId!=null?String(away.teamId):null,
               hs:home.score!=null?Number(home.score):null,as:away.score!=null?Number(away.score):null};
     }))
     .catch(e=>{ delete _sbCache[date]; throw e; });
@@ -66,63 +70,57 @@ async function box(gameId){
   const data=await gql(SHA,{contestId:String(gameId),staticTestEnv:null});
   return data&&data.boxscore;
 }
-let _boxShapeLogged=false;
+let _boxDumped=false;
 function pick(o,keys){ for(const k of keys){ if(o&&o[k]!=null&&o[k]!=='') return o[k]; } return ''; }
 function playerName(p){
-  const a=p.athlete||p.player||p;
-  const first=pick(a,['firstName','first_name']), last=pick(a,['lastName','last_name']);
+  const first=pick(p,['firstName','first_name']), last=pick(p,['lastName','last_name']);
   if(first||last) return (first+' '+last).trim();
-  return pick(a,['fullName','displayName','name'])||'';
+  return pick(p,['fullName','displayName','name'])||'';
 }
-function playerNumber(p){ const a=p.athlete||p.player||p; return String(pick(a,['jerseyNumber','jersey','number','uniformNumber'])||''); }
+function playerNumber(p){ return String(pick(p,['number','jerseyNumber','jersey','uniformNumber'])||''); }
 function playerPos(p){
-  const a=p.athlete||p.player||p; const pos=a.position||a.positions;
+  const pos=p.position||p.positions;
   if(Array.isArray(pos)) return pos.map(x=>(x&&(x.abbreviation||x.name))||x).join('/');
   if(pos&&typeof pos==='object') return pos.abbreviation||pos.name||'';
   return pos||'';
 }
-function statValues(p){
-  const stats=p.stats||p.playerStats||p.statistics||[];
-  if(Array.isArray(stats)) return stats.slice(0,6).map(s=>{ if(s==null) return ''; if(typeof s!=='object') return s;
-    const v=s.displayValue!=null?s.displayValue:(s.value!=null?s.value:''); return v; });
-  return [];
-}
-/* Builds TSV rows for one game from its box-score JSON. NCAA's GraphQL box-score shape
-   isn't something this scraper can be tested against from a sandbox (no live network
-   access here), so this reads several plausible field names defensively; if a game's
-   shape doesn't match, it's skipped and logged rather than emitting garbage rows. On
-   the very first game it also logs a compact shape summary once, so a bad mapping can
-   be spotted and fixed from real console output in one round-trip instead of guessing. */
-function rows(gid,ncaaId,date,bx){
+/* Builds TSV rows for one game from its box-score JSON.  Confirmed live (Sep 18 2026,
+   via a [box shape] console dump David pasted back): teamBoxscore entries carry only
+   __typename/teamId/playerStats -- no team name -- so the real name+side come from the
+   scoreboard() pod (matched on date+team names before box() is ever called) keyed by
+   teamId, not by array order. Each player is {firstName,lastName,position,number,
+   starter,...}; "kind" (batting vs pitching) isn't confirmed yet -- position==='P' is
+   used as the pitching signal for now, which is enough to pick the starting pitcher and
+   the nine starting position players correctly, but isn't proven for two-way players or
+   the stat columns (c1-c6), which are left blank rather than guessed. On the first game
+   of a run this also downloads the FULL raw box JSON as a file (not just a console log,
+   which truncates) so the remaining fields can be nailed down from real data next round. */
+function rows(gid,ncaaId,date,bx,pod){
   const out=[];
   const teams=(bx&&bx.teamBoxscore)||[];
-  if(!_boxShapeLogged){
-    _boxShapeLogged=true;
-    try{
-      console.log('[box shape] teamBoxscore top-level keys:', teams[0]?Object.keys(teams[0]):'(none)');
-      const t0=teams[0]||{}; const players0=t0.playerStats||t0.players||t0.roster||[];
-      console.log('[box shape] first player keys:', players0[0]?Object.keys(players0[0]):'(none)', players0[0]);
-    }catch(e){}
+  if(!_boxDumped){
+    _boxDumped=true;
+    try{ download('box_shape_debug_'+gid+'.json', JSON.stringify(bx,null,2)); }catch(e){}
   }
   teams.forEach((tb,ti)=>{
-    const teamInfo=tb.team||tb;
-    const teamName=pick(teamInfo,['nameShort','name6Char','seoname','name'])||('team'+ti);
-    const side=teamInfo.isHome===true?'home':(teamInfo.isHome===false?'away':(ti===0?'away':'home'));
-    const players=tb.playerStats||tb.players||tb.roster||[];
+    let teamName, side;
+    const tid=tb.teamId!=null?String(tb.teamId):null;
+    if(pod && tid && pod.homeId && tid===pod.homeId){ teamName=pod.home; side='home'; }
+    else if(pod && tid && pod.awayId && tid===pod.awayId){ teamName=pod.away; side='away'; }
+    else { teamName=pod?(ti===0?pod.away:pod.home):('team'+ti); side=ti===0?'away':'home'; }
+    const players=tb.playerStats||[];
     players.forEach((p,i)=>{
       const name=playerName(p);
       if(!name) return;
-      const kind=p.kind||p.group||((p.pitching||p.isPitcher)?'pitching':'batting');
+      const pos=playerPos(p);
+      const kind=(String(pos).toUpperCase()==='P')?'pitching':'batting';
       const order=pick(p,['battingOrder','order','lineupOrder'])||(i+1);
       const number=playerNumber(p);
-      const pos=playerPos(p);
-      const starter=(p.starter===true||p.isStarter===true||p.gs==='1'||p.gs===1)?'1':'0';
-      const stats=statValues(p);
-      const c=[0,1,2,3,4,5].map(j=>stats[j]!=null?stats[j]:'');
-      out.push([gid,ncaaId,date,teamName,side,kind,order,name,number,pos,starter,...c].join('\t'));
+      const starter=(p.starter===true||p.isStarter===true||p.starter==='1'||p.starter===1)?'1':'0';
+      out.push([gid,ncaaId,date,teamName,side,kind,order,name,number,pos,starter,'','','','','',''].join('\t'));
     });
   });
-  if(!out.length) console.log('[rows] no players parsed for game',gid,'-- box shape may not match; see [box shape] log above');
+  if(!out.length) console.log('[rows] no players parsed for game',gid,'-- see box_shape_debug file');
   return out;
 }
 
@@ -145,7 +143,7 @@ async function run(conf){
       if(cand.length>1&&ar!==null) cand=cand.filter(p=>(p.as===ar&&p.hs===hr)||(p.as===hr&&p.hs===ar)).concat(cand).slice(0,1);
       if(!cand.length){ st.miss.push(`${gid}\t${date}\t${away}\t${home}\tnot on scoreboard`); bufDone.push(gid); continue; }
       const bx=await box(cand[0].id); if(!bx||!bx.teamBoxscore){ st.miss.push(`${gid}\t${date}\t${away}\t${home}\tno box (${cand[0].id})`); bufDone.push(gid); await sleep(DELAY); continue; }
-      buf.push(...rows(gid,cand[0].id,date,bx)); bufDone.push(gid); n++;
+      buf.push(...rows(gid,cand[0].id,date,bx,cand[0])); bufDone.push(gid); n++;
       if(n%25===0) console.log(conf,'done',n,'of',todo.length,((Date.now()-t0)/1000).toFixed(0)+'s');
       if(bufDone.length>=PART) await flush(false);
     }catch(e){ console.log('error on',gid,e.message,'— pausing 15 s'); await sleep(15000); }
@@ -157,5 +155,5 @@ async function run(conf){
 }
 return {run,list:()=>console.log(Object.keys(CONF).sort().map(c=>c+' ('+CONF[c].length+')').join('\n')),reset:c=>{ localStorage.removeItem('ncaa2_'+c); localStorage.removeItem('ncaa_part_'+c); Object.keys(localStorage).filter(k=>k.startsWith('ncaa_sb')).forEach(k=>localStorage.removeItem(k)); },scoreboard,box};
 })();
-console.log('puller v9 loaded (restored missing scoreboard/box/rows/same/sleep helpers; part files every 150 games; no browser database). NCAA.run("ALL") pulls every remaining regular-season game (~2 h, resumable); NCAA.list() for single conferences.');
+console.log('puller v10 loaded (team names resolved via teamId, not array order; raw box JSON dumped to a file on the first game of each run for field verification). NCAA.run("ALL") pulls every remaining regular-season game (~2 h, resumable); NCAA.list() for single conferences.');
 NCAA.scoreboard('2026-02-13').then(p=>console.log('self-check:',p.length,'games on 2026-02-13',p.length?JSON.stringify(p[0]):'')).catch(e=>console.log('self-check FAILED:',e.message));
